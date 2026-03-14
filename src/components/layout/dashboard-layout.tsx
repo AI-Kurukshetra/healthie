@@ -48,7 +48,7 @@ export function DashboardLayout({
   );
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(63,132,244,0.12),_transparent_28%),linear-gradient(180deg,#fbfdff_0%,#f3f7fb_100%)]">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(63,132,244,0.12),_transparent_24%),radial-gradient(circle_at_bottom_right,_rgba(15,23,42,0.08),_transparent_20%),linear-gradient(180deg,#fbfdff_0%,#f1f6fb_100%)]">
       <div className="page-shell flex items-start gap-6 py-6 lg:py-8">
         <Sidebar
           items={navigation}
@@ -58,7 +58,7 @@ export function DashboardLayout({
           title={sidebarTitle}
           userName={userName}
         />
-        <div className="relative z-10 min-w-0 flex-1 space-y-4 pt-14 sm:space-y-6 lg:pt-0">
+        <div className="relative z-10 min-w-0 flex-1 space-y-4 sm:space-y-6">
           <Header
             actions={actions}
             description={description}
@@ -66,17 +66,19 @@ export function DashboardLayout({
             title={title}
             userName={userName}
           />
-          <div className="grid gap-4 sm:gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="grid gap-4 sm:gap-6 2xl:grid-cols-[minmax(0,1fr)_320px]">
             <div className="min-w-0">{children}</div>
-            <div className="hidden space-y-6 xl:block">
-              <NotificationRail currentUserId={currentUserId} notifications={notifications} />
+            <div className="hidden space-y-6 2xl:block">
+              <div className="sticky top-6">
+                <NotificationRail currentUserId={currentUserId} notifications={notifications} />
+              </div>
             </div>
           </div>
         </div>
       </div>
 
       {activityOpen ? (
-        <div className="fixed inset-0 z-40 bg-slate-950/30 px-4 pb-4 pt-24 xl:hidden">
+        <div className="fixed inset-0 z-40 bg-slate-950/30 px-4 pb-4 pt-24 2xl:hidden">
           <button aria-label="Close activity panel" className="absolute inset-0" onClick={() => setActivityOpen(false)} type="button" />
           <div className="relative mx-auto flex h-full max-w-lg flex-col gap-3">
             <div className="flex items-center justify-between rounded-pill border border-border bg-white px-4 py-3 shadow-soft">

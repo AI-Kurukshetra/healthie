@@ -53,25 +53,39 @@ export async function POST(request: NextRequest) {
 
   const userId = createResult.data.user.id;
 
-  await (admin.from("users") as any)
-    .update({ full_name: parsed.data.full_name, email: parsed.data.email, role: "provider" })
-    .eq("id", userId);
+  const userUpsert = await (admin.from("users") as any).upsert(
+    {
+      id: userId,
+      full_name: parsed.data.full_name,
+      email: parsed.data.email,
+      role: "provider",
+      organization_id: null,
+      avatar_url: null
+    },
+    { onConflict: "id" }
+  );
 
-  const providerUpdate = await (admin.from("providers") as any)
-    .update({
+  if (userUpsert.error) {
+    await admin.auth.admin.deleteUser(userId);
+    return apiError(userUpsert.error.message, 400);
+  }
+
+  const providerUpsert = await (admin.from("providers") as any)
+    .upsert({
+      user_id: userId,
       specialty: parsed.data.specialty || null,
       license_number: parsed.data.license_number || null,
       bio: parsed.data.bio || null
-    })
-    .eq("user_id", userId)
+    }, { onConflict: "user_id" })
     .select("*")
     .single();
 
-  if (providerUpdate.error) {
-    return apiError(providerUpdate.error.message, 400);
+  if (providerUpsert.error) {
+    await admin.auth.admin.deleteUser(userId);
+    return apiError(providerUpsert.error.message, 400);
   }
 
-  return apiSuccess({ user_id: userId, provider: providerUpdate.data }, { status: 201 });
+  return apiSuccess({ user_id: userId, provider: providerUpsert.data }, { status: 201 });
 }
 
 export async function PATCH(request: NextRequest) {
@@ -100,21 +114,21 @@ export async function PATCH(request: NextRequest) {
       return apiError(userUpdate.error.message, 400);
     }
 
-    const providerUpdate = await (client.from("providers") as any)
-      .update({
+    const providerUpsert = await (client.from("providers") as any)
+      .upsert({
+        user_id: parsed.data.user_id,
         specialty: parsed.data.specialty || null,
         license_number: parsed.data.license_number || null,
         bio: parsed.data.bio || null
-      })
-      .eq("user_id", parsed.data.user_id)
+      }, { onConflict: "user_id" })
       .select("*")
       .single();
 
-    if (providerUpdate.error) {
-      return apiError(providerUpdate.error.message, 400);
+    if (providerUpsert.error) {
+      return apiError(providerUpsert.error.message, 400);
     }
 
-    return apiSuccess({ user: userUpdate.data, provider: providerUpdate.data });
+    return apiSuccess({ user: userUpdate.data, provider: providerUpsert.data });
   }
 
   if (profile.role !== "provider" && profile.role !== "admin") {
@@ -144,23 +158,23 @@ export async function PATCH(request: NextRequest) {
     return apiError(userUpdate.error.message, 400);
   }
 
-  const providerUpdate = await (client.from("providers") as any)
-    .update({
+  const providerUpsert = await (client.from("providers") as any)
+    .upsert({
+      user_id: user.id,
       specialty: parsed.data.specialty || null,
       license_number: parsed.data.license_number || null,
       bio: parsed.data.bio || null
-    })
-    .eq("user_id", user.id)
+    }, { onConflict: "user_id" })
     .select("*")
     .single();
 
-  if (providerUpdate.error) {
-    return apiError(providerUpdate.error.message, 400);
+  if (providerUpsert.error) {
+    return apiError(providerUpsert.error.message, 400);
   }
 
   return apiSuccess({
     user: userUpdate.data,
-    provider: providerUpdate.data
+    provider: providerUpsert.data
   });
 }
 

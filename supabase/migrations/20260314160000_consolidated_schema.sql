@@ -51,6 +51,20 @@ create table if not exists public.providers (
   updated_at timestamptz not null default timezone('utc', now())
 );
 
+create table if not exists public.provider_availability (
+  id uuid primary key default gen_random_uuid(),
+  provider_id uuid not null references public.providers(id) on delete cascade,
+  day_of_week smallint not null check (day_of_week between 0 and 6),
+  start_time time not null,
+  end_time time not null,
+  slot_duration_minutes integer not null default 30 check (slot_duration_minutes > 0),
+  timezone text not null default 'UTC',
+  is_available boolean not null default true,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  constraint provider_availability_time_window check (start_time < end_time)
+);
+
 create table if not exists public.appointments (
   id uuid primary key default gen_random_uuid(),
   patient_id uuid not null references public.patients(id) on delete cascade,
@@ -134,6 +148,8 @@ create index if not exists medical_records_patient_id_idx on public.medical_reco
 create index if not exists prescriptions_patient_id_idx on public.prescriptions(patient_id);
 create index if not exists messages_sender_receiver_idx on public.messages(sender_id, receiver_id);
 create index if not exists notifications_user_id_idx on public.notifications(user_id);
+create index if not exists provider_availability_provider_day_idx
+  on public.provider_availability(provider_id, day_of_week, start_time);
 
 drop trigger if exists organizations_set_updated_at on public.organizations;
 create trigger organizations_set_updated_at
@@ -153,6 +169,11 @@ for each row execute function public.set_updated_at();
 drop trigger if exists providers_set_updated_at on public.providers;
 create trigger providers_set_updated_at
 before update on public.providers
+for each row execute function public.set_updated_at();
+
+drop trigger if exists provider_availability_set_updated_at on public.provider_availability;
+create trigger provider_availability_set_updated_at
+before update on public.provider_availability
 for each row execute function public.set_updated_at();
 
 drop trigger if exists appointments_set_updated_at on public.appointments;
@@ -230,6 +251,7 @@ alter table public.users enable row level security;
 alter table public.organizations enable row level security;
 alter table public.patients enable row level security;
 alter table public.providers enable row level security;
+alter table public.provider_availability enable row level security;
 alter table public.appointments enable row level security;
 alter table public.medical_records enable row level security;
 alter table public.clinical_notes enable row level security;
@@ -252,6 +274,44 @@ create policy "users update own profile" on public.users
 for update using (auth.uid() = id or public.current_role() = 'admin')
 with check (auth.uid() = id or public.current_role() = 'admin');
 
+drop policy if exists "authenticated users read provider user rows" on public.users;
+create policy "authenticated users read provider user rows" on public.users
+for select using (
+  exists (
+    select 1
+    from public.providers p
+    where p.user_id = users.id
+  )
+  or auth.uid() = id
+  or public.current_role() = 'admin'
+);
+
+drop policy if exists "providers read patient user rows for appointments" on public.users;
+create policy "providers read patient user rows for appointments" on public.users
+for select using (
+  public.current_role() = 'provider'
+  and exists (
+    select 1
+    from public.patients p
+    join public.appointments a on a.patient_id = p.id
+    where p.user_id = users.id
+      and a.provider_id = public.current_provider_id()
+  )
+);
+
+drop policy if exists "patients read provider user rows for appointments" on public.users;
+create policy "patients read provider user rows for appointments" on public.users
+for select using (
+  public.current_role() = 'patient'
+  and exists (
+    select 1
+    from public.providers p
+    join public.appointments a on a.provider_id = p.id
+    where p.user_id = users.id
+      and a.patient_id = public.current_patient_id()
+  )
+);
+
 drop policy if exists "patients read own profile" on public.patients;
 create policy "patients read own profile" on public.patients
 for select using (user_id = auth.uid() or public.current_role() = 'admin');
@@ -273,6 +333,15 @@ create policy "providers manage own provider row" on public.providers
 for all using (user_id = auth.uid() or public.current_role() = 'admin')
 with check (user_id = auth.uid() or public.current_role() = 'admin');
 
+drop policy if exists "authenticated users read provider availability" on public.provider_availability;
+create policy "authenticated users read provider availability" on public.provider_availability
+for select using (auth.role() = 'authenticated');
+
+drop policy if exists "providers manage own availability" on public.provider_availability;
+create policy "providers manage own availability" on public.provider_availability
+for all using (provider_id = public.current_provider_id() or public.current_role() = 'admin')
+with check (provider_id = public.current_provider_id() or public.current_role() = 'admin');
+
 drop policy if exists "patients read own appointments" on public.appointments;
 create policy "patients read own appointments" on public.appointments
 for select using (
@@ -282,6 +351,21 @@ for select using (
 drop policy if exists "patients create appointments" on public.appointments;
 create policy "patients create appointments" on public.appointments
 for insert with check (
+  patient_id = public.current_patient_id() or public.current_role() = 'admin'
+);
+
+drop policy if exists "patients update own appointments" on public.appointments;
+create policy "patients update own appointments" on public.appointments
+for update using (
+  patient_id = public.current_patient_id() or public.current_role() = 'admin'
+)
+with check (
+  patient_id = public.current_patient_id() or public.current_role() = 'admin'
+);
+
+drop policy if exists "patients delete own appointments" on public.appointments;
+create policy "patients delete own appointments" on public.appointments
+for delete using (
   patient_id = public.current_patient_id() or public.current_role() = 'admin'
 );
 
@@ -338,6 +422,95 @@ drop policy if exists "admins read audit logs" on public.audit_logs;
 create policy "admins read audit logs" on public.audit_logs
 for select using (public.current_role() = 'admin');
 
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'medical-documents',
+  'medical-documents',
+  false,
+  52428800,
+  array['application/pdf', 'image/png', 'image/jpeg', 'image/webp']
+)
+on conflict (id) do update
+set public = excluded.public,
+    file_size_limit = excluded.file_size_limit,
+    allowed_mime_types = excluded.allowed_mime_types;
 
+drop policy if exists "admins manage medical documents" on storage.objects;
+create policy "admins manage medical documents" on storage.objects
+for all using (
+  bucket_id = 'medical-documents' and public.current_role() = 'admin'
+)
+with check (
+  bucket_id = 'medical-documents' and public.current_role() = 'admin'
+);
 
+drop policy if exists "authenticated users read own medical documents" on storage.objects;
+create policy "authenticated users read own medical documents" on storage.objects
+for select using (
+  bucket_id = 'medical-documents'
+  and auth.role() = 'authenticated'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
 
+drop policy if exists "authenticated users upload own medical documents" on storage.objects;
+create policy "authenticated users upload own medical documents" on storage.objects
+for insert with check (
+  bucket_id = 'medical-documents'
+  and auth.role() = 'authenticated'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+drop policy if exists "authenticated users update own medical documents" on storage.objects;
+create policy "authenticated users update own medical documents" on storage.objects
+for update using (
+  bucket_id = 'medical-documents'
+  and auth.role() = 'authenticated'
+  and (storage.foldername(name))[1] = auth.uid()::text
+)
+with check (
+  bucket_id = 'medical-documents'
+  and auth.role() = 'authenticated'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+drop policy if exists "authenticated users delete own medical documents" on storage.objects;
+create policy "authenticated users delete own medical documents" on storage.objects
+for delete using (
+  bucket_id = 'medical-documents'
+  and auth.role() = 'authenticated'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'messages'
+  ) then
+    execute 'alter publication supabase_realtime add table public.messages';
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'notifications'
+  ) then
+    execute 'alter publication supabase_realtime add table public.notifications';
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'appointments'
+  ) then
+    execute 'alter publication supabase_realtime add table public.appointments';
+  end if;
+end
+$$;

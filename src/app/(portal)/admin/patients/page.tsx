@@ -1,14 +1,15 @@
-import { AdminPatientManager } from "@/components/admin/admin-patient-manager";
+import { AdminPatientDirectory } from "@/components/admin/admin-patient-directory";
+import type { AdminPatientRecord } from "@/components/admin/admin-patient-types";
 import { requireRole } from "@/lib/auth";
-import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import type { SupabaseTypedClient } from "@/repositories/base";
 import { listPatients } from "@/repositories/userRepository";
-import type { Patient } from "@/types/domain";
 
 export default async function AdminPatientsPage() {
   await requireRole("admin");
-  const supabase = createSupabaseServerComponentClient();
+  const supabase = createSupabaseAdminClient() as unknown as SupabaseTypedClient;
   const patientsQuery = await listPatients(supabase);
-  const patients = (patientsQuery.data ?? []) as Patient[];
+  const patients = (patientsQuery.data ?? []) as AdminPatientRecord[];
 
-  return <AdminPatientManager patients={patients as any} />;
+  return <AdminPatientDirectory patients={patients} />;
 }

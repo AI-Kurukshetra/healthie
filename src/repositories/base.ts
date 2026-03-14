@@ -1,4 +1,4 @@
-﻿import type { PostgrestError } from "@supabase/supabase-js";
+import type { PostgrestError } from "@supabase/supabase-js";
 
 import type { createSupabaseServerComponentClient } from "@/lib/supabase/server";
 

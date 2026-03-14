@@ -1,14 +1,15 @@
-import { AdminProviderManager } from "@/components/admin/admin-provider-manager";
+import { AdminProviderDirectory } from "@/components/admin/admin-provider-directory";
+import type { AdminProviderRecord } from "@/components/admin/admin-provider-types";
 import { requireRole } from "@/lib/auth";
-import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import type { SupabaseTypedClient } from "@/repositories/base";
 import { listProviders } from "@/repositories/userRepository";
-import type { Provider } from "@/types/domain";
 
 export default async function AdminProvidersPage() {
   await requireRole("admin");
-  const supabase = createSupabaseServerComponentClient();
+  const supabase = createSupabaseAdminClient() as unknown as SupabaseTypedClient;
   const providersQuery = await listProviders(supabase);
-  const providers = (providersQuery.data ?? []) as Provider[];
+  const providers = (providersQuery.data ?? []) as AdminProviderRecord[];
 
-  return <AdminProviderManager providers={providers as any} />;
+  return <AdminProviderDirectory providers={providers} />;
 }

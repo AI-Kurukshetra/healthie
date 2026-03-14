@@ -53,26 +53,40 @@ export async function POST(request: NextRequest) {
 
   const userId = createResult.data.user.id;
 
-  await (admin.from("users") as any)
-    .update({ full_name: parsed.data.full_name, email: parsed.data.email, role: "patient" })
-    .eq("id", userId);
+  const userUpsert = await (admin.from("users") as any).upsert(
+    {
+      id: userId,
+      full_name: parsed.data.full_name,
+      email: parsed.data.email,
+      role: "patient",
+      organization_id: null,
+      avatar_url: null
+    },
+    { onConflict: "id" }
+  );
 
-  const patientUpdate = await (admin.from("patients") as any)
-    .update({
+  if (userUpsert.error) {
+    await admin.auth.admin.deleteUser(userId);
+    return apiError(userUpsert.error.message, 400);
+  }
+
+  const patientUpsert = await (admin.from("patients") as any)
+    .upsert({
+      user_id: userId,
       date_of_birth: parsed.data.date_of_birth || null,
       phone: parsed.data.phone || null,
       emergency_contact: parsed.data.emergency_contact || null,
       insurance_provider: parsed.data.insurance_provider || null
-    })
-    .eq("user_id", userId)
+    }, { onConflict: "user_id" })
     .select("*")
     .single();
 
-  if (patientUpdate.error) {
-    return apiError(patientUpdate.error.message, 400);
+  if (patientUpsert.error) {
+    await admin.auth.admin.deleteUser(userId);
+    return apiError(patientUpsert.error.message, 400);
   }
 
-  return apiSuccess({ user_id: userId, patient: patientUpdate.data }, { status: 201 });
+  return apiSuccess({ user_id: userId, patient: patientUpsert.data }, { status: 201 });
 }
 
 export async function PATCH(request: NextRequest) {
