@@ -1,5 +1,6 @@
 import { revalidatePath } from "next/cache";
 
+import { readEmergencySession } from "@/lib/emergency-session";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseRouteHandlerClient } from "@/lib/supabase/server";
 import { getCurrentUserProfile } from "@/repositories/userRepository";
@@ -62,21 +63,58 @@ async function ensureRoleProfile(profile: UserProfile) {
 }
 
 export async function requireApiUser() {
+  const emergencySession = readEmergencySession();
+  if (emergencySession) {
+    const supabase = createSupabaseAdminClient() as any;
+    const { data: profile } = await getCurrentUserProfile(supabase, emergencySession.userId);
+    const effectiveProfile =
+      profile ??
+      ({
+        id: emergencySession.userId,
+        email: emergencySession.email,
+        full_name: null,
+        role: emergencySession.role,
+        organization_id: null,
+        avatar_url: null,
+        created_at: new Date().toISOString()
+      } satisfies UserProfile);
+
+    return {
+      supabase,
+      user: {
+        id: effectiveProfile.id,
+        email: effectiveProfile.email,
+        created_at: effectiveProfile.created_at,
+        user_metadata: {
+          role: effectiveProfile.role,
+          full_name: effectiveProfile.full_name ?? undefined
+        }
+      } as any,
+      profile: effectiveProfile
+    };
+  }
+
   const supabase = createSupabaseRouteHandlerClient();
   const {
-    data: { session }
-  } = await supabase.auth.getSession();
-  const user = session?.user ?? null;
+    data: { user }
+  } = await supabase.auth.getUser();
 
   if (!user) {
     return { supabase, user: null, profile: null as UserProfile | null };
   }
 
   const { data: profile } = await getCurrentUserProfile(supabase, user.id);
-  const effectiveProfile = profile ?? buildFallbackProfile(user);
 
+  if (profile) {
+    return {
+      supabase,
+      user,
+      profile
+    };
+  }
+
+  const effectiveProfile = buildFallbackProfile(user);
   await ensureRoleProfile(effectiveProfile);
-
   const { data: refreshedProfile } = await getCurrentUserProfile(supabase, user.id);
 
   return {

@@ -4,20 +4,17 @@ import { formatDistanceToNow } from "date-fns";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { useRealtimeNotifications } from "@/hooks/use-realtime-notifications";
 import type { Notification } from "@/types/domain";
 
 export function NotificationRail({
   notifications,
-  currentUserId,
+  onMarkAsRead,
   compact = false
 }: {
   notifications: Notification[];
-  currentUserId?: string;
+  onMarkAsRead: (id: string) => Promise<void>;
   compact?: boolean;
 }) {
-  const { notifications: liveNotifications, markAsRead } = useRealtimeNotifications(notifications, currentUserId);
-
   return (
     <Card className={compact ? "p-4" : "p-5"}>
       <div>
@@ -25,14 +22,14 @@ export function NotificationRail({
         <h3 className="mt-2 text-lg font-semibold text-ink">Recent activity</h3>
       </div>
       <div className={compact ? "mt-4 space-y-2" : "mt-5 space-y-3"}>
-        {liveNotifications.length === 0 ? (
+        {notifications.length === 0 ? (
           <div className="rounded-[20px] border border-dashed border-border p-4 text-sm text-muted">No recent notifications.</div>
         ) : (
-          liveNotifications.slice(0, compact ? 8 : 6).map((notification) => (
+          notifications.slice(0, compact ? 8 : 6).map((notification) => (
             <button
               key={notification.id}
               className={compact ? "w-full rounded-[18px] border border-border bg-surface-muted p-3 text-left" : "w-full rounded-[20px] border border-border bg-surface-muted p-4 text-left"}
-              onClick={() => markAsRead(notification.id)}
+              onClick={() => void onMarkAsRead(notification.id)}
               type="button"
             >
               <div className="flex items-start justify-between gap-3">
@@ -53,8 +50,8 @@ export function NotificationRail({
           ))
         )}
       </div>
-      {liveNotifications.length > 0 ? (
-        <Button className="mt-4 w-full" onClick={() => void Promise.all(liveNotifications.filter((item) => !item.read_at).map((item) => markAsRead(item.id)))} size="sm" variant="ghost">
+      {notifications.length > 0 ? (
+        <Button className="mt-4 w-full" onClick={() => void Promise.all(notifications.filter((item) => !item.read_at).map((item) => onMarkAsRead(item.id)))} size="sm" variant="ghost">
           Mark all as read
         </Button>
       ) : null}

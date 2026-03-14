@@ -9,8 +9,6 @@ import { ensureAppointmentReminderNotifications } from "@/services/notificationS
 import type { Appointment, MedicalRecord, Notification, Patient, Prescription, Provider } from "@/types/domain";
 
 export async function getPatientDashboardData(client: SupabaseTypedClient, patientId: string, userId: string) {
-  await ensureAppointmentReminderNotifications(client, userId, "patient");
-
   const [appointmentsQuery, recordsQuery, prescriptionsQuery, notificationsQuery] = await Promise.all([
     listAppointments(client, { patientId }),
     listMedicalRecords(client, patientId),

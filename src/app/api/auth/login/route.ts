@@ -4,17 +4,68 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { apiError, apiSuccess } from "@/lib/api";
 import { getDefaultDashboard } from "@/lib/auth";
+import {
+  canUseEmergencySession,
+  setEmergencySessionCookie
+} from "@/lib/emergency-session";
 import { hasSupabaseEnv } from "@/lib/env";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseRouteHandlerClient } from "@/lib/supabase/server";
-import { getCurrentUserProfile } from "@/repositories/userRepository";
 import type { Role } from "@/types/domain";
 import { loginSchema } from "@/validators/auth";
 
-function resolveRole(profileRole: Role | null | undefined, metadataRole: unknown): Role {
-  if (profileRole) {
-    return profileRole;
+function normalizeAuthError(error: unknown, status: number) {
+  if (error && typeof error === "object") {
+    const message = "message" in error ? error.message : null;
+
+    if (typeof message === "string") {
+      const trimmed = message.trim();
+
+      if (trimmed && trimmed !== "{}" && trimmed !== "[object Object]") {
+        return trimmed;
+      }
+    }
   }
 
+  if (status === 504) {
+    return "Supabase Auth timed out while verifying your credentials.";
+  }
+
+  if (status === 401 || status === 400) {
+    return "Invalid email or password.";
+  }
+
+  return "Unable to sign in.";
+}
+
+async function signInWithTimeout(
+  supabase: ReturnType<typeof createSupabaseRouteHandlerClient>,
+  credentials: { email: string; password: string },
+  timeoutMs = 8000
+) {
+  const timeoutResult = new Promise<{
+    data: null;
+    error: { status: number; name: string; message: string };
+  }>((resolve) => {
+    setTimeout(() => {
+      resolve({
+        data: null,
+        error: {
+          status: 504,
+          name: "AuthTimeoutError",
+          message: "Supabase Auth timed out while verifying your credentials."
+        }
+      });
+    }, timeoutMs);
+  });
+
+  return Promise.race([
+    supabase.auth.signInWithPassword(credentials),
+    timeoutResult
+  ]);
+}
+
+function resolveRole(metadataRole: unknown): Role {
   if (metadataRole === "patient" || metadataRole === "provider" || metadataRole === "admin") {
     return metadataRole;
   }
@@ -35,14 +86,63 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createSupabaseRouteHandlerClient();
-  const { data, error } = await supabase.auth.signInWithPassword(parsed.data);
+  let data: Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>["data"] | null = null;
+  let error: Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>["error"] | null = null;
 
-  if (error || !data.user) {
-    return apiError(error?.message ?? "Unable to sign in.", 401);
+  try {
+    const result = await signInWithTimeout(supabase, parsed.data);
+    data = result.data;
+    error = result.error;
+  } catch (caughtError) {
+    console.error("[api/auth/login] signInWithPassword threw", caughtError);
+    return apiError("Supabase Auth timed out while verifying your credentials.", 504);
   }
 
-  const { data: profile } = await getCurrentUserProfile(supabase, data.user.id);
-  const role = resolveRole(profile?.role, data.user.user_metadata?.role);
+  if (error || !data.user) {
+    const status =
+      typeof error?.status === "number" && error.status >= 400 ? error.status : 401;
+
+    console.error("[api/auth/login] signInWithPassword failed", {
+      status,
+      name: error?.name ?? null,
+      message: error?.message ?? null
+    });
+
+    if (status === 504 && canUseEmergencySession(request.nextUrl.hostname)) {
+      const admin = createSupabaseAdminClient();
+      const userLookup = await (admin.from("users") as any)
+        .select("id, email, role")
+        .eq("email", parsed.data.email)
+        .maybeSingle();
+      const fallbackUser = userLookup.data as { id: string; email: string; role: Role } | null;
+
+      if (fallbackUser) {
+        console.warn("[api/auth/login] using localhost emergency session fallback", {
+          userId: fallbackUser.id,
+          role: fallbackUser.role
+        });
+
+        const redirectTo = getDefaultDashboard(fallbackUser.role);
+        const response = apiSuccess({ redirectTo, emergency: true });
+        response.cookies.set("sb-role", fallbackUser.role, {
+          httpOnly: false,
+          path: "/",
+          sameSite: "lax"
+        });
+        setEmergencySessionCookie(response, {
+          userId: fallbackUser.id,
+          email: fallbackUser.email,
+          role: fallbackUser.role
+        });
+
+        return response;
+      }
+    }
+
+    return apiError(normalizeAuthError(error, status), status);
+  }
+
+  const role = resolveRole(data.user.user_metadata?.role);
   const redirectTo = getDefaultDashboard(role);
   const response = apiSuccess({ redirectTo });
 

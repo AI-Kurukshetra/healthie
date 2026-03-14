@@ -1,41 +1,22 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { createBrowserSupabaseClient } from "@/lib/supabaseClient";
 import { loginSchema } from "@/validators/auth";
-import type { Role } from "@/types/domain";
 
 type LoginFormValues = {
   email: string;
   password: string;
 };
 
-function getDefaultDashboard(role: Role) {
-  switch (role) {
-    case "patient":
-      return "/patient/dashboard";
-    case "provider":
-      return "/provider/dashboard";
-    default:
-      return "/admin/dashboard";
-  }
-}
-
-function resolveRole(metadataRole: unknown): Role {
-  if (metadataRole === "patient" || metadataRole === "provider" || metadataRole === "admin") {
-    return metadataRole;
-  }
-
-  return "patient";
-}
-
 export function LoginForm() {
+  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const { register, handleSubmit } = useForm<LoginFormValues>();
@@ -50,18 +31,31 @@ export function LoginForm() {
     setLoading(true);
     setError(null);
 
-    const supabase = createBrowserSupabaseClient();
-    const { data, error } = await supabase.auth.signInWithPassword(parsed.data);
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(parsed.data)
+      });
+      const payload = await response.json().catch(() => null);
 
-    if (error || !data.user) {
-      setError(error?.message ?? "Unable to sign in.");
+      if (!response.ok) {
+        setError(payload?.error ?? "Unable to sign in.");
+        setLoading(false);
+        return;
+      }
+
+      const redirectTo =
+        typeof payload?.data?.redirectTo === "string" ? payload.data.redirectTo : "/patient/dashboard";
+
+      router.replace(redirectTo);
+      router.refresh();
+    } catch {
+      setError("Unable to reach the login service.");
       setLoading(false);
-      return;
     }
-
-    const role = resolveRole(data.user.user_metadata?.role);
-    document.cookie = `sb-role=${role}; Path=/; SameSite=Lax`;
-    window.location.assign(getDefaultDashboard(role));
   });
 
   return (

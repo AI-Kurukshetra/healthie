@@ -1,6 +1,10 @@
 import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 
+import {
+  canUseEmergencySession,
+  readEmergencySessionFromRequest
+} from "@/lib/emergency-session";
 import { getDefaultDashboard } from "@/lib/auth";
 import type { Database } from "@/types/database";
 import type { Role } from "@/types/domain";
@@ -26,21 +30,48 @@ function resolveRole(metadataRole: unknown, cookieRole: string | undefined): Rol
 }
 
 export async function middleware(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  const matchedProtectedPrefix = protectedPrefixes.find((prefix) => pathname.startsWith(prefix));
+  const isAuthPage = authPages.includes(pathname);
+  const emergencySession =
+    canUseEmergencySession(request.nextUrl.hostname) ? readEmergencySessionFromRequest(request) : null;
+
+  if (emergencySession) {
+    const role = emergencySession.role;
+
+    if (matchedProtectedPrefix) {
+      const allowedPrefixes = roleAllowedPrefixes[role];
+      const isAllowed = allowedPrefixes.some((prefix) => pathname.startsWith(prefix));
+
+      if (!isAllowed) {
+        return NextResponse.redirect(new URL(getDefaultDashboard(role), request.url));
+      }
+    }
+
+    if (isAuthPage) {
+      return NextResponse.redirect(new URL(getDefaultDashboard(role), request.url));
+    }
+
+    return NextResponse.next();
+  }
+
+  if (!matchedProtectedPrefix && !isAuthPage) {
+    return NextResponse.next();
+  }
+
   const response = NextResponse.next();
   const supabase = createMiddlewareClient<Database>({ req: request, res: response });
   const {
-    data: { session }
-  } = await supabase.auth.getSession();
+    data: { user }
+  } = await supabase.auth.getUser();
 
-  const pathname = request.nextUrl.pathname;
-  const matchedProtectedPrefix = protectedPrefixes.find((prefix) => pathname.startsWith(prefix));
-  const role = resolveRole(session?.user.user_metadata.role, request.cookies.get("sb-role")?.value);
+  const role = resolveRole(user?.user_metadata.role, request.cookies.get("sb-role")?.value);
 
-  if (matchedProtectedPrefix && !session?.user) {
+  if (matchedProtectedPrefix && !user) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  if (authPages.includes(pathname) && session?.user && role) {
+  if (isAuthPage && user && role) {
     return NextResponse.redirect(new URL(getDefaultDashboard(role), request.url));
   }
 

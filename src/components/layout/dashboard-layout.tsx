@@ -7,6 +7,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { NotificationBell } from "@/components/dashboard/notification-bell";
 import { NotificationRail } from "@/components/dashboard/notification-rail";
 import { Button } from "@/components/ui/button";
+import { useRealtimeNotifications } from "@/hooks/use-realtime-notifications";
 import { dashboardNavigation } from "@/modules/navigation";
 import type { Notification, Role } from "@/types/domain";
 
@@ -34,15 +35,20 @@ export function DashboardLayout({
 }>) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
+  const {
+    notifications: liveNotifications,
+    unreadCount,
+    markAsRead
+  } = useRealtimeNotifications(notifications, currentUserId);
   const unreadNotifications = useMemo(
-    () => notifications.filter((item) => !item.read_at).length,
-    [notifications]
+    () => unreadCount,
+    [unreadCount]
   );
   const navigation = dashboardNavigation[role];
 
   const actions = (
     <>
-      <NotificationBell currentUserId={currentUserId} notifications={notifications} onClick={() => setActivityOpen((current) => !current)} />
+      <NotificationBell onClick={() => setActivityOpen((current) => !current)} unreadCount={unreadCount} />
       {headerActions}
     </>
   );
@@ -70,7 +76,7 @@ export function DashboardLayout({
             <div className="min-w-0">{children}</div>
             <div className="hidden space-y-6 2xl:block">
               <div className="sticky top-6">
-                <NotificationRail currentUserId={currentUserId} notifications={notifications} />
+                <NotificationRail notifications={liveNotifications} onMarkAsRead={markAsRead} />
               </div>
             </div>
           </div>
@@ -91,7 +97,7 @@ export function DashboardLayout({
               </Button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <NotificationRail compact currentUserId={currentUserId} notifications={notifications} />
+              <NotificationRail compact notifications={liveNotifications} onMarkAsRead={markAsRead} />
             </div>
           </div>
         </div>

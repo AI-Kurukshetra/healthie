@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { createBrowserSupabaseClient } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 
 export function LogoutButton({ className }: { className?: string }) {
@@ -18,10 +17,12 @@ export function LogoutButton({ className }: { className?: string }) {
     setLoading(true);
 
     try {
-      const supabase = createBrowserSupabaseClient();
-      await supabase.auth.signOut();
+      await fetch("/api/auth/logout", {
+        method: "POST"
+      });
     } finally {
       document.cookie = "sb-role=; Path=/; Max-Age=0; SameSite=Lax";
+      document.cookie = "hp-emergency-session=; Path=/; Max-Age=0; SameSite=Lax";
       router.replace("/login");
       router.refresh();
       setLoading(false);

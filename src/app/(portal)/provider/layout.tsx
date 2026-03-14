@@ -2,7 +2,6 @@ import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import { listNotifications } from "@/repositories/notificationRepository";
 import { ProviderDashboardLayout } from "@/components/layout/provider-dashboard-layout";
-import { ensureAppointmentReminderNotifications } from "@/services/notificationService";
 import type { Notification } from "@/types/domain";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +13,6 @@ export default async function ProviderLayout({
 }) {
   const { profile, user } = await requireRole("provider");
   const supabase = createSupabaseServerComponentClient();
-  await ensureAppointmentReminderNotifications(supabase, user.id, "provider");
   const notificationsQuery = await listNotifications(supabase, user.id);
   const notifications = (notificationsQuery.data ?? []) as Notification[];
 

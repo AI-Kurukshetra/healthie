@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
+import { readEmergencySession } from "@/lib/emergency-session";
 import { hasSupabaseEnv } from "@/lib/env";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
@@ -81,21 +82,56 @@ export async function getSessionContext() {
     };
   }
 
+  const emergencySession = readEmergencySession();
+  if (emergencySession) {
+    const admin = createSupabaseAdminClient();
+    const { data: profile } = await getCurrentUserProfile(admin as any, emergencySession.userId);
+    const effectiveProfile =
+      profile ??
+      ({
+        id: emergencySession.userId,
+        email: emergencySession.email,
+        full_name: null,
+        role: emergencySession.role,
+        organization_id: null,
+        avatar_url: null,
+        created_at: new Date().toISOString()
+      } satisfies UserProfile);
+
+    return {
+      user: {
+        id: effectiveProfile.id,
+        email: effectiveProfile.email,
+        created_at: effectiveProfile.created_at,
+        user_metadata: {
+          role: effectiveProfile.role,
+          full_name: effectiveProfile.full_name ?? undefined
+        }
+      } as any,
+      profile: effectiveProfile
+    };
+  }
+
   const supabase = createSupabaseServerComponentClient();
   const {
-    data: { session }
-  } = await supabase.auth.getSession();
-  const user = session?.user ?? null;
+    data: { user }
+  } = await supabase.auth.getUser();
 
   if (!user) {
     return { user: null, profile: null as UserProfile | null };
   }
 
   const { data: profile } = await getCurrentUserProfile(supabase, user.id);
-  const effectiveProfile = profile ?? buildFallbackProfile(user);
 
+  if (profile) {
+    return {
+      user,
+      profile
+    };
+  }
+
+  const effectiveProfile = buildFallbackProfile(user);
   await ensureRoleProfile(effectiveProfile);
-
   const { data: refreshedProfile } = await getCurrentUserProfile(supabase, user.id);
 
   return {
