@@ -1,0 +1,22 @@
+import { AdminPrescriptionManager } from "@/components/admin/admin-prescription-manager";
+import { requireRole } from "@/lib/auth";
+import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { listPrescriptions } from "@/repositories/prescriptionRepository";
+import { listPatients, listProviders } from "@/repositories/userRepository";
+import type { Patient, Prescription, Provider } from "@/types/domain";
+
+export default async function AdminPrescriptionsPage() {
+  await requireRole("admin");
+  const supabase = createSupabaseServerComponentClient();
+  const [prescriptionsQuery, patientsQuery, providersQuery] = await Promise.all([
+    listPrescriptions(supabase),
+    listPatients(supabase),
+    listProviders(supabase)
+  ]);
+
+  const prescriptions = (prescriptionsQuery.data ?? []) as Prescription[];
+  const patients = (patientsQuery.data ?? []) as Patient[];
+  const providers = (providersQuery.data ?? []) as Provider[];
+
+  return <AdminPrescriptionManager patients={patients as any} prescriptions={prescriptions} providers={providers as any} />;
+}
