@@ -10,6 +10,7 @@ import {
   Pill,
   Settings,
   Stethoscope,
+  UserCog,
   Users
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -60,6 +61,7 @@ export const dashboardNavigation: Record<Role, NavigationItem[]> = {
     { href: "/admin/prescriptions", label: "Prescriptions", icon: Pill, description: "Medication activity" },
     { href: "/admin/messages", label: "Messages", icon: MessageSquare, description: "Communication volume" },
     { href: "/admin/analytics", label: "Analytics", icon: ChartColumnBig, description: "Business intelligence" },
+    { href: "/admin/profile", label: "Profile", icon: UserCog, description: "Account & password" },
     { href: "/admin/settings", label: "Settings", icon: Settings, description: "Administration" }
   ]
 };

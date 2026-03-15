@@ -2,13 +2,17 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
 
-import { createAuditLog, refreshPortalPaths, requireApiUser } from "@/app/api/_utils/helpers";
+import { createAuditLog, fireAndForget, refreshPortalPaths, requireApiUser } from "@/app/api/_utils/helpers";
 import { apiError, apiSuccess } from "@/lib/api";
+import { apiLimiter, getClientKey, rateLimitResponse, writeLimiter } from "@/lib/rate-limit";
 import { createProviderAvailability, deleteProviderAvailability, listProviderAvailability } from "@/repositories/providerAvailabilityRepository";
 import { getProviderByUserId } from "@/repositories/userRepository";
 import { providerAvailabilitySchema } from "@/validators/provider-availability";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const rl = apiLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user } = await requireApiUser();
   if (!user) {
     return apiError("Unauthorized.", 401);
@@ -23,6 +27,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const rl = writeLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user, profile } = await requireApiUser();
   if (!user || !profile) {
     return apiError("Unauthorized.", 401);
@@ -50,12 +57,15 @@ export async function POST(request: NextRequest) {
     return apiError(error?.message ?? "Unable to save availability.", 400);
   }
 
-  await createAuditLog("provider_availability.created", "provider_availability", data.id, { provider_id: data.provider_id });
+  fireAndForget(createAuditLog("provider_availability.created", "provider_availability", data.id, { provider_id: data.provider_id }));
   refreshPortalPaths(["/provider/appointments", "/patient/appointments"]);
   return apiSuccess(data, { status: 201 });
 }
 
 export async function DELETE(request: NextRequest) {
+  const rl = writeLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user, profile } = await requireApiUser();
   if (!user || !profile) {
     return apiError("Unauthorized.", 401);
@@ -92,7 +102,7 @@ export async function DELETE(request: NextRequest) {
     return apiError(error?.message ?? "Unable to delete availability.", 400);
   }
 
-  await createAuditLog("provider_availability.deleted", "provider_availability", data.id, { provider_id: data.provider_id });
+  fireAndForget(createAuditLog("provider_availability.deleted", "provider_availability", data.id, { provider_id: data.provider_id }));
   refreshPortalPaths(["/provider/appointments", "/patient/appointments"]);
   return apiSuccess(data);
 }

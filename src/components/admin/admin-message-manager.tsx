@@ -1,30 +1,46 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { MessageSquare, Plus, SquarePen, Trash2, X } from "lucide-react";
+import { Inbox, MessageSquare, Plus, Search, Send, SquarePen, Trash2, X } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/shared/empty-state";
+import { useToast } from "@/components/ui/toast";
 import type { Message, UserProfile } from "@/types/domain";
 
 export function AdminMessageManager({ messages, users }: { messages: Message[]; users: UserProfile[] }) {
   const router = useRouter();
+  const { success: toastSuccess, error: toastError } = useToast();
   const formRef = useRef<HTMLFormElement>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingMsg, setEditingMsg] = useState<Message | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
-  const nameMap = new Map(users.map((u) => [u.id, u.full_name ?? u.email]));
-  const roleMap = new Map(users.map((u) => [u.id, u.role]));
+  const nameMap = useMemo(() => new Map(users.map((u) => [u.id, u.full_name ?? u.email])), [users]);
+  const roleMap = useMemo(() => new Map(users.map((u) => [u.id, u.role])), [users]);
+
+  const filtered = useMemo(() => {
+    if (!query.trim()) return messages;
+    const q = query.toLowerCase();
+    return messages.filter((m) => {
+      const sender = (nameMap.get(m.sender_id) ?? "").toLowerCase();
+      const receiver = (nameMap.get(m.receiver_id) ?? "").toLowerCase();
+      const content = (m.message ?? "").toLowerCase();
+      return sender.includes(q) || receiver.includes(q) || content.includes(q);
+    });
+  }, [messages, query, nameMap]);
+
   const uniqueSenders = new Set(messages.map((m) => m.sender_id)).size;
   const uniqueReceivers = new Set(messages.map((m) => m.receiver_id)).size;
 
@@ -34,27 +50,37 @@ export function AdminMessageManager({ messages, users }: { messages: Message[]; 
     setError(null);
     const fd = new FormData(event.currentTarget);
 
-    const response = await fetch("/api/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sender_id: String(fd.get("sender_id") ?? ""),
-        receiver_id: String(fd.get("receiver_id") ?? ""),
-        message: String(fd.get("message") ?? "")
-      })
-    });
+    try {
+      const response = await fetch("/api/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sender_id: String(fd.get("sender_id") ?? ""),
+          receiver_id: String(fd.get("receiver_id") ?? ""),
+          message: String(fd.get("message") ?? "").trim()
+        })
+      });
 
-    const payload = await response.json();
-    setLoading(false);
-    if (!response.ok) {
-      setError(payload.error ?? "Unable to send message.");
-      return;
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to send message.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
+
+      toastSuccess("Message sent.");
+      formRef.current?.reset();
+      setShowForm(false);
+      setError(null);
+      router.refresh();
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
+      setLoading(false);
     }
-
-    formRef.current?.reset();
-    setShowForm(false);
-    setError(null);
-    router.refresh();
   }
 
   async function handleUpdate(event: React.FormEvent<HTMLFormElement>) {
@@ -64,35 +90,53 @@ export function AdminMessageManager({ messages, users }: { messages: Message[]; 
     setError(null);
     const fd = new FormData(event.currentTarget);
 
-    const response = await fetch("/api/messages", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: editingMsg.id, message: String(fd.get("message") ?? "") })
-    });
+    try {
+      const response = await fetch("/api/messages", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: editingMsg.id, message: String(fd.get("message") ?? "").trim() })
+      });
 
-    setBusyId(null);
-    if (!response.ok) {
-      const payload = await response.json();
-      setError(payload.error ?? "Unable to update message.");
-      return;
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to update message.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
+
+      toastSuccess("Message updated.");
+      setEditingMsg(null);
+      setError(null);
+      router.refresh();
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
+      setBusyId(null);
     }
-
-    setEditingMsg(null);
-    setError(null);
-    router.refresh();
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this message? This cannot be undone.")) return;
+    if (!window.confirm("Delete this message? This cannot be undone.")) return;
     setBusyId(id);
-    await fetch("/api/messages", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id })
-    });
-    setBusyId(null);
-    if (editingMsg?.id === id) setEditingMsg(null);
-    router.refresh();
+
+    try {
+      const res = await fetch("/api/messages", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id })
+      });
+      if (res.ok) toastSuccess("Message deleted.");
+      else toastError("Unable to delete message.");
+      if (editingMsg?.id === id) setEditingMsg(null);
+      router.refresh();
+    } catch {
+      toastError("Network error. Please check your connection and try again.");
+    } finally {
+      setBusyId(null);
+    }
   }
 
   function openEdit(msg: Message) {
@@ -125,15 +169,24 @@ export function AdminMessageManager({ messages, users }: { messages: Message[]; 
 
         <div className="mt-6 grid gap-4 sm:grid-cols-3">
           <div className="rounded-[22px] border border-border/80 bg-white/85 p-4 shadow-soft">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Total messages</p>
+            <div className="flex items-center gap-2">
+              <MessageSquare className="h-4 w-4 text-primary-deep" />
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Total messages</p>
+            </div>
             <p className="mt-2 text-3xl font-semibold text-ink">{messages.length}</p>
           </div>
           <div className="rounded-[22px] border border-border/80 bg-white/85 p-4 shadow-soft">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Active senders</p>
+            <div className="flex items-center gap-2">
+              <Send className="h-4 w-4 text-primary-deep" />
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Active senders</p>
+            </div>
             <p className="mt-2 text-3xl font-semibold text-ink">{uniqueSenders}</p>
           </div>
           <div className="rounded-[22px] border border-border/80 bg-white/85 p-4 shadow-soft">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Active receivers</p>
+            <div className="flex items-center gap-2">
+              <Inbox className="h-4 w-4 text-primary-deep" />
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Active receivers</p>
+            </div>
             <p className="mt-2 text-3xl font-semibold text-ink">{uniqueReceivers}</p>
           </div>
         </div>
@@ -240,17 +293,30 @@ export function AdminMessageManager({ messages, users }: { messages: Message[]; 
 
       {/* Data Table */}
       <Card className="overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-5">
-          <div>
-            <h3 className="text-lg font-semibold text-ink">Message log</h3>
-            <p className="mt-1 text-sm text-muted">All secure messages between patients and providers.</p>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4">
+          <div className="relative w-full max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+            <Input
+              className="pl-9"
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by sender, receiver, or message..."
+              type="search"
+              value={query}
+            />
           </div>
-          <Badge>{messages.length} rows</Badge>
+          <div className="flex items-center gap-3">
+            <Badge>{filtered.length} of {messages.length}</Badge>
+          </div>
         </div>
 
-        {messages.length === 0 ? (
+        {filtered.length === 0 && query.trim() === "" ? (
           <div className="p-6">
             <EmptyState description="No messages yet. Click 'Send message' above to create the first one." title="No messages found" />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="px-6 py-12 text-center">
+            <p className="text-sm font-medium text-ink">No messages match &ldquo;{query}&rdquo;</p>
+            <p className="mt-1 text-xs text-muted">Try a different search term or clear the filter.</p>
           </div>
         ) : (
           <>
@@ -259,16 +325,16 @@ export function AdminMessageManager({ messages, users }: { messages: Message[]; 
               <table className="min-w-full divide-y divide-border text-left text-sm">
                 <thead className="bg-surface-muted text-muted">
                   <tr>
-                    <th className="px-6 py-4 font-semibold">From</th>
-                    <th className="px-6 py-4 font-semibold">To</th>
-                    <th className="px-6 py-4 font-semibold">Message</th>
-                    <th className="px-6 py-4 font-semibold">Sent</th>
-                    <th className="px-6 py-4 text-right font-semibold">Actions</th>
+                    <th className="px-6 py-3.5 font-semibold">From</th>
+                    <th className="px-6 py-3.5 font-semibold">To</th>
+                    <th className="px-6 py-3.5 font-semibold">Message</th>
+                    <th className="px-6 py-3.5 font-semibold">Sent</th>
+                    <th className="px-6 py-3.5 text-right font-semibold">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border bg-white">
-                  {messages.map((msg) => (
-                    <tr key={msg.id} className={`align-middle ${editingMsg?.id === msg.id ? "bg-primary-soft/30" : ""}`}>
+                  {filtered.map((msg) => (
+                    <tr key={msg.id} className={`align-middle transition-colors hover:bg-surface-muted/50 ${editingMsg?.id === msg.id ? "bg-primary-soft/30" : ""}`}>
                       <td className="px-6 py-4">
                         <div className="flex min-w-[160px] items-center gap-3">
                           <Avatar className="h-9 w-9 shrink-0" name={nameMap.get(msg.sender_id)} />
@@ -307,8 +373,8 @@ export function AdminMessageManager({ messages, users }: { messages: Message[]; 
 
             {/* Mobile cards */}
             <div className="space-y-3 p-4 lg:hidden">
-              {messages.map((msg) => (
-                <div key={msg.id} className={`rounded-[22px] border p-4 ${editingMsg?.id === msg.id ? "border-primary/30 bg-primary-soft/20" : "border-border/80 bg-surface-muted"}`}>
+              {filtered.map((msg) => (
+                <div key={msg.id} className={`rounded-[22px] border p-4 ${editingMsg?.id === msg.id ? "border-primary/30 bg-primary-soft/20" : "border-border/80 bg-white shadow-soft transition-shadow hover:shadow-card"}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-ink">{nameMap.get(msg.sender_id) ?? "Unknown"} <span className="font-normal text-muted">to</span> {nameMap.get(msg.receiver_id) ?? "Unknown"}</p>

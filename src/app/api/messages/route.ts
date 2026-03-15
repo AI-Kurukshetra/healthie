@@ -2,20 +2,16 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
 
-import { createAuditLog, notifyUser, refreshPortalPaths, requireApiUser } from "@/app/api/_utils/helpers";
+import { createAuditLog, fireAndForget, getAdminClientOrFallback, notifyUser, refreshPortalPaths, requireApiUser } from "@/app/api/_utils/helpers";
 import { apiError, apiSuccess } from "@/lib/api";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { apiLimiter, getClientKey, rateLimitResponse, writeLimiter } from "@/lib/rate-limit";
 import { createMessage, listMessages } from "@/repositories/messageRepository";
 import { messageSchema } from "@/validators/message";
 
-function getWriteClient(role: string, fallback: any) {
-  if (role === "admin") {
-    try { return createSupabaseAdminClient() as any; } catch { return fallback; }
-  }
-  return fallback;
-}
-
 export async function GET(request: NextRequest) {
+  const rl = apiLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user } = await requireApiUser();
   if (!user) {
     return apiError("Unauthorized.", 401);
@@ -31,12 +27,15 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const rl = writeLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user, profile } = await requireApiUser();
   if (!user || !profile) {
     return apiError("Unauthorized.", 401);
   }
 
-  const client = getWriteClient(profile.role, supabase);
+  const client = getAdminClientOrFallback(supabase);
   const body = await request.json();
   const parsed = messageSchema.safeParse(body);
   if (!parsed.success) {
@@ -48,26 +47,32 @@ export async function POST(request: NextRequest) {
     return apiError(error?.message ?? "Unable to send message.", 400);
   }
 
-  await notifyUser(data.receiver_id, "message", "New secure message", data.message.slice(0, 120));
-  await createAuditLog("message.created", "messages", data.id, { receiver_id: data.receiver_id });
+  // Fire notification + audit in background
+  fireAndForget(
+    notifyUser(data.receiver_id, "message", "New secure message", data.message.slice(0, 120)),
+    createAuditLog("message.created", "messages", data.id, { receiver_id: data.receiver_id })
+  );
   refreshPortalPaths(["/patient/messages", "/provider/messages", "/admin/messages"]);
   return apiSuccess(data, { status: 201 });
 }
 
 export async function PATCH(request: NextRequest) {
+  const rl = writeLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user, profile } = await requireApiUser();
   if (!user || !profile) {
     return apiError("Unauthorized.", 401);
   }
 
-  const client = getWriteClient(profile.role, supabase);
+  const client = getAdminClientOrFallback(supabase);
   const body = await request.json();
   if (!body.id || !body.message) {
     return apiError("Message id and message text are required.");
   }
 
-  const existingQuery = await client.from("messages").select("*").eq("id", body.id).maybeSingle();
-  const existing = existingQuery.data as { id: string; sender_id: string; receiver_id: string } | null;
+  const existingQuery = await client.from("messages").select("id, sender_id").eq("id", body.id).maybeSingle();
+  const existing = existingQuery.data as { id: string; sender_id: string } | null;
   if (!existing) {
     return apiError("Message not found.", 404);
   }
@@ -86,24 +91,27 @@ export async function PATCH(request: NextRequest) {
     return apiError(error.message, 400);
   }
 
-  await createAuditLog("message.updated", "messages", data.id, {});
+  fireAndForget(createAuditLog("message.updated", "messages", data.id, {}));
   refreshPortalPaths(["/patient/messages", "/provider/messages", "/admin/messages"]);
   return apiSuccess(data);
 }
 
 export async function DELETE(request: NextRequest) {
+  const rl = writeLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user, profile } = await requireApiUser();
   if (!user || !profile) {
     return apiError("Unauthorized.", 401);
   }
 
-  const client = getWriteClient(profile.role, supabase);
+  const client = getAdminClientOrFallback(supabase);
   const body = await request.json();
   if (!body.id) {
     return apiError("Message id is required.");
   }
 
-  const existingQuery = await client.from("messages").select("*").eq("id", body.id).maybeSingle();
+  const existingQuery = await client.from("messages").select("id, sender_id").eq("id", body.id).maybeSingle();
   const existing = existingQuery.data as { id: string; sender_id: string } | null;
   if (!existing) {
     return apiError("Message not found.", 404);
@@ -118,7 +126,7 @@ export async function DELETE(request: NextRequest) {
     return apiError(error.message, 400);
   }
 
-  await createAuditLog("message.deleted", "messages", String(body.id), {});
+  fireAndForget(createAuditLog("message.deleted", "messages", String(body.id), {}));
   refreshPortalPaths(["/patient/messages", "/provider/messages", "/admin/messages"]);
   return apiSuccess({ id: body.id });
 }

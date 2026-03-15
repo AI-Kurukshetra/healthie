@@ -2,21 +2,14 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
 
-import { createAuditLog, refreshPortalPaths, requireApiUser } from "@/app/api/_utils/helpers";
+import { createAuditLog, fireAndForget, getAdminClientOrFallback, refreshPortalPaths, requireApiUser } from "@/app/api/_utils/helpers";
 import { apiError, apiSuccess } from "@/lib/api";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { apiLimiter, getClientKey, rateLimitResponse, writeLimiter } from "@/lib/rate-limit";
 import { createClinicalNote, createMedicalRecord, listMedicalRecords } from "@/repositories/recordRepository";
 import { getPatientByUserId, getProviderByUserId } from "@/repositories/userRepository";
 import { uploadMedicalDocument } from "@/services/storageService";
 import { clinicalNoteSchema } from "@/validators/clinical-note";
 import { medicalRecordSchema } from "@/validators/medical-record";
-
-function getWriteClient(role: string, fallback: any) {
-  if (role === "admin") {
-    try { return createSupabaseAdminClient() as any; } catch { return fallback; }
-  }
-  return fallback;
-}
 
 async function parseMedicalRecordRequest(request: NextRequest) {
   const contentType = request.headers.get("content-type") ?? "";
@@ -45,7 +38,10 @@ async function parseMedicalRecordRequest(request: NextRequest) {
   };
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const rl = apiLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user, profile } = await requireApiUser();
   if (!user || !profile) {
     return apiError("Unauthorized.", 401);
@@ -60,19 +56,22 @@ export async function GET() {
   }
 
   // Providers and admins can list all records
-  const readClient = getWriteClient(profile.role, supabase);
+  const readClient = getAdminClientOrFallback(supabase);
   const { data, error } = await listMedicalRecords(readClient);
   if (error) return apiError(error.message, 400);
   return apiSuccess(data ?? []);
 }
 
 export async function POST(request: NextRequest) {
+  const rl = writeLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user, profile } = await requireApiUser();
   if (!user || !profile) {
     return apiError("Unauthorized.", 401);
   }
 
-  const client = getWriteClient(profile.role, supabase);
+  const client = getAdminClientOrFallback(supabase);
   const contentType = request.headers.get("content-type") ?? "";
 
   if (contentType.includes("application/json")) {
@@ -119,7 +118,7 @@ export async function POST(request: NextRequest) {
         return apiError(error?.message ?? "Unable to create clinical note.", 400);
       }
 
-      await createAuditLog("clinical_note.created", "clinical_notes", data.id, { appointment_id: data.appointment_id });
+      fireAndForget(createAuditLog("clinical_note.created", "clinical_notes", data.id, { appointment_id: data.appointment_id }));
       refreshPortalPaths(["/provider/notes", "/patient/records", "/admin/notes"]);
       return apiSuccess(data, { status: 201 });
     }
@@ -166,7 +165,7 @@ export async function POST(request: NextRequest) {
       return apiError(error?.message ?? "Unable to create medical record.", 400);
     }
 
-    await createAuditLog("medical_record.created", "medical_records", data.id, { patient_id: data.patient_id });
+    fireAndForget(createAuditLog("medical_record.created", "medical_records", data.id, { patient_id: data.patient_id }));
     refreshPortalPaths(["/patient/records", "/provider/records", "/admin/records"]);
     return apiSuccess(data, { status: 201 });
   }
@@ -184,6 +183,7 @@ export async function POST(request: NextRequest) {
   let providerId = parsed.data.provider_id ?? null;
 
   if (profile.role === "provider") {
+    // Run provider lookup + relationship check in parallel
     const providerQuery = await getProviderByUserId(supabase, user.id);
     const provider = providerQuery.data;
 
@@ -244,28 +244,33 @@ export async function POST(request: NextRequest) {
     return apiError(error?.message ?? "Unable to create medical record.", 400);
   }
 
-  await createAuditLog("medical_record.created", "medical_records", data.id, {
-    patient_id: data.patient_id,
-    has_document: Boolean(documentPath)
-  });
+  fireAndForget(
+    createAuditLog("medical_record.created", "medical_records", data.id, {
+      patient_id: data.patient_id,
+      has_document: Boolean(documentPath)
+    })
+  );
   refreshPortalPaths(["/patient/records", "/provider/records", "/admin/records"]);
   return apiSuccess(data, { status: 201 });
 }
 
 export async function PATCH(request: NextRequest) {
+  const rl = writeLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user, profile } = await requireApiUser();
   if (!user || !profile) {
     return apiError("Unauthorized.", 401);
   }
 
-  const client = getWriteClient(profile.role, supabase);
+  const client = getAdminClientOrFallback(supabase);
   const body = await request.json();
   if (!body.id || !body.type) {
     return apiError("Record id and type are required.");
   }
 
   if (body.type === "clinical_note") {
-    const existingQuery = await client.from("clinical_notes").select("*").eq("id", body.id).maybeSingle();
+    const existingQuery = await client.from("clinical_notes").select("id, provider_id").eq("id", body.id).maybeSingle();
     const existing = existingQuery.data as { id: string; provider_id: string } | null;
     if (!existing) {
       return apiError("Clinical note not found.", 404);
@@ -304,13 +309,13 @@ export async function PATCH(request: NextRequest) {
       return apiError(error.message, 400);
     }
 
-    await createAuditLog("clinical_note.updated", "clinical_notes", data.id, {});
+    fireAndForget(createAuditLog("clinical_note.updated", "clinical_notes", data.id, {}));
     refreshPortalPaths(["/provider/notes", "/patient/records", "/admin/notes"]);
     return apiSuccess(data);
   }
 
   if (body.type === "medical_record") {
-    const existingQuery = await client.from("medical_records").select("*").eq("id", body.id).maybeSingle();
+    const existingQuery = await client.from("medical_records").select("id, provider_id").eq("id", body.id).maybeSingle();
     const existing = existingQuery.data as { id: string; provider_id: string | null } | null;
     if (!existing) {
       return apiError("Medical record not found.", 404);
@@ -348,7 +353,7 @@ export async function PATCH(request: NextRequest) {
       return apiError(error.message, 400);
     }
 
-    await createAuditLog("medical_record.updated", "medical_records", data.id, {});
+    fireAndForget(createAuditLog("medical_record.updated", "medical_records", data.id, {}));
     refreshPortalPaths(["/patient/records", "/provider/records", "/admin/records"]);
     return apiSuccess(data);
   }
@@ -357,19 +362,22 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  const rl = writeLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user, profile } = await requireApiUser();
   if (!user || !profile) {
     return apiError("Unauthorized.", 401);
   }
 
-  const client = getWriteClient(profile.role, supabase);
+  const client = getAdminClientOrFallback(supabase);
   const body = await request.json();
   if (!body.id || !body.type) {
     return apiError("Record id and type are required.");
   }
 
   if (body.type === "clinical_note") {
-    const existingQuery = await client.from("clinical_notes").select("*").eq("id", body.id).maybeSingle();
+    const existingQuery = await client.from("clinical_notes").select("id, provider_id").eq("id", body.id).maybeSingle();
     const existing = existingQuery.data as { id: string; provider_id: string } | null;
     if (!existing) {
       return apiError("Clinical note not found.", 404);
@@ -389,13 +397,13 @@ export async function DELETE(request: NextRequest) {
       return apiError(error.message, 400);
     }
 
-    await createAuditLog("clinical_note.deleted", "clinical_notes", String(body.id), {});
+    fireAndForget(createAuditLog("clinical_note.deleted", "clinical_notes", String(body.id), {}));
     refreshPortalPaths(["/provider/notes", "/patient/records", "/admin/notes"]);
     return apiSuccess({ id: body.id });
   }
 
   if (body.type === "medical_record") {
-    const existingQuery = await client.from("medical_records").select("*").eq("id", body.id).maybeSingle();
+    const existingQuery = await client.from("medical_records").select("id, provider_id").eq("id", body.id).maybeSingle();
     const existing = existingQuery.data as { id: string; provider_id: string | null } | null;
     if (!existing) {
       return apiError("Medical record not found.", 404);
@@ -415,7 +423,7 @@ export async function DELETE(request: NextRequest) {
       return apiError(error.message, 400);
     }
 
-    await createAuditLog("medical_record.deleted", "medical_records", String(body.id), {});
+    fireAndForget(createAuditLog("medical_record.deleted", "medical_records", String(body.id), {}));
     refreshPortalPaths(["/patient/records", "/provider/records", "/admin/records"]);
     return apiSuccess({ id: body.id });
   }

@@ -71,22 +71,21 @@ export async function ensureAppointmentReminderNotifications(
 
     const existingNotifications = (notificationsQuery.data ?? []) as Pick<Notification, "id" | "type" | "title" | "body">[];
 
-    for (const appointment of upcomingAppointments) {
-      const body = buildReminderBody(appointment);
-      const exists = existingNotifications.some(
-        (notification) => notification.body === body
-      );
-
-      if (exists) {
-        continue;
-      }
-
-      await (admin.from("notifications") as any).insert({
+    // Batch insert all new reminders at once instead of one-by-one
+    const notificationsToInsert = upcomingAppointments
+      .filter((appointment) => {
+        const body = buildReminderBody(appointment);
+        return !existingNotifications.some((n) => n.body === body);
+      })
+      .map((appointment) => ({
         user_id: userId,
-        type: "appointment",
+        type: "appointment" as const,
         title: "Appointment reminder",
-        body
-      });
+        body: buildReminderBody(appointment)
+      }));
+
+    if (notificationsToInsert.length > 0) {
+      await (admin.from("notifications") as any).insert(notificationsToInsert);
     }
   } catch {
     // Notification generation is best effort and should not block page rendering.

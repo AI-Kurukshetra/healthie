@@ -2,9 +2,10 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
 
-import { createAuditLog, notifyUser, refreshPortalPaths, requireApiUser } from "@/app/api/_utils/helpers";
+import { createAuditLog, fireAndForget, notifyUser, refreshPortalPaths, requireApiUser } from "@/app/api/_utils/helpers";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { apiError, apiSuccess } from "@/lib/api";
+import { apiLimiter, getClientKey, rateLimitResponse, writeLimiter } from "@/lib/rate-limit";
 import { createAppointment, listAppointments } from "@/repositories/appointmentRepository";
 import { listProviderAvailability } from "@/repositories/providerAvailabilityRepository";
 import { getPatientByUserId, getProviderByUserId } from "@/repositories/userRepository";
@@ -24,7 +25,10 @@ function isWithinAvailability(availability: ProviderAvailability[], scheduledAt:
   return availability.some((slot) => slot.day_of_week === day && slot.start_time.slice(0, 5) <= time && slot.end_time.slice(0, 5) >= time);
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const rl = apiLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user, profile } = await requireApiUser();
 
   if (!user || !profile) {
@@ -58,6 +62,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const rl = writeLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user, profile } = await requireApiUser();
   if (!user || !profile) {
     return apiError("Unauthorized.", 401);
@@ -98,22 +105,25 @@ export async function POST(request: NextRequest) {
     return apiError(error?.message ?? "Unable to create appointment.", 400);
   }
 
-  const patientLookup = await writeClient.from("patients").select("user_id").eq("id", data.patient_id).single();
-  const providerLookup = await writeClient.from("providers").select("user_id").eq("id", data.provider_id).single();
+  // Lookup patient and provider user_ids in parallel
+  const [patientLookup, providerLookup] = await Promise.all([
+    writeClient.from("patients").select("user_id").eq("id", data.patient_id).single(),
+    writeClient.from("providers").select("user_id").eq("id", data.provider_id).single()
+  ]);
   const patient = (patientLookup.data ?? null) as { user_id: string } | null;
   const provider = (providerLookup.data ?? null) as { user_id: string } | null;
 
+  // Fire notifications + audit log in background — don't block the response
+  const bgTasks: Promise<any>[] = [];
   if (patient?.user_id) {
-    await notifyUser(patient.user_id, "appointment", "Appointment booked", "Your visit has been booked successfully.");
+    bgTasks.push(notifyUser(patient.user_id, "appointment", "Appointment booked", "Your visit has been booked successfully."));
   }
-
   if (provider?.user_id) {
-    await notifyUser(provider.user_id, "appointment", "New appointment", "A new consultation has been booked.");
+    bgTasks.push(notifyUser(provider.user_id, "appointment", "New appointment", "A new consultation has been booked."));
   }
-
-  await createAuditLog("appointment.created", "appointments", data.id, { status: data.status }, user.id);
+  bgTasks.push(createAuditLog("appointment.created", "appointments", data.id, { status: data.status }, user.id));
+  fireAndForget(...bgTasks);
   refreshPortalPaths(["/patient/appointments", "/provider/appointments", "/patient/dashboard", "/provider/dashboard"]);
 
   return apiSuccess(data, { status: 201 });
 }
-

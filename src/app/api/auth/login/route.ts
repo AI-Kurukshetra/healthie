@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 
+import { createAuditLog, fireAndForget } from "@/app/api/_utils/helpers";
 import { apiError, apiSuccess } from "@/lib/api";
 import { getDefaultDashboard } from "@/lib/auth";
 import {
@@ -9,6 +10,7 @@ import {
   setEmergencySessionCookie
 } from "@/lib/emergency-session";
 import { hasSupabaseEnv } from "@/lib/env";
+import { authLimiter, getClientKey, rateLimitResponse } from "@/lib/rate-limit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseRouteHandlerClient } from "@/lib/supabase/server";
 import type { Role } from "@/types/domain";
@@ -74,6 +76,9 @@ function resolveRole(metadataRole: unknown): Role {
 }
 
 export async function POST(request: NextRequest) {
+  const rl = authLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   if (!hasSupabaseEnv) {
     return apiError("Supabase environment variables are not configured.", 500);
   }
@@ -139,6 +144,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    fireAndForget(
+      createAuditLog("user.login_failed", "users", null, { email: parsed.data.email, status })
+    );
+
     return apiError(normalizeAuthError(error, status), status);
   }
 
@@ -152,10 +161,13 @@ export async function POST(request: NextRequest) {
     sameSite: "lax"
   });
 
+  fireAndForget(
+    createAuditLog("user.login", "users", data.user.id, { email: parsed.data.email, role }, data.user.id)
+  );
+
   return response;
 }
 
 export async function GET(request: NextRequest) {
   return NextResponse.redirect(new URL("/login", request.url));
 }
-

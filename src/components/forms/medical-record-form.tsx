@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/components/ui/toast";
 
 type PatientOption = {
   id: string;
@@ -23,6 +24,7 @@ export function MedicalRecordForm({
   patients: PatientOption[];
 }) {
   const router = useRouter();
+  const { success: toastSuccess, error: toastError } = useToast();
   const formRef = useRef<HTMLFormElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -35,21 +37,30 @@ export function MedicalRecordForm({
     const formData = new FormData(event.currentTarget);
     formData.set("provider_id", providerId);
 
-    const response = await fetch("/api/records", {
-      method: "POST",
-      body: formData
-    });
+    try {
+      const response = await fetch("/api/records", {
+        method: "POST",
+        body: formData
+      });
 
-    const payload = await response.json();
-    if (!response.ok) {
-      setError(payload.error ?? "Unable to save medical record.");
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to save medical record.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
+
+      toastSuccess("Medical record saved.");
+      formRef.current?.reset();
+      router.refresh();
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    formRef.current?.reset();
-    router.refresh();
-    setLoading(false);
   }
 
   return (

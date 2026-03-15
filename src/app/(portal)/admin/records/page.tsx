@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 
-import { AdminMedicalRecordManager } from "@/components/admin/admin-medical-record-manager";
+import { AdminMedicalRecordDirectory } from "@/components/admin/admin-medical-record-directory";
 import { requireRole } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { listMedicalRecords } from "@/repositories/recordRepository";
@@ -36,5 +36,5 @@ export default async function AdminRecordsPage() {
     }
   }
 
-  return <AdminMedicalRecordManager patients={patients as any} providers={providers as any} records={recordsWithLinks} />;
+  return <AdminMedicalRecordDirectory patients={patients} providers={providers} records={recordsWithLinks} />;
 }

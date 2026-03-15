@@ -7,6 +7,7 @@ import { useRealtimeMessages } from "@/hooks/use-realtime-messages";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/components/ui/toast";
 import type { Message } from "@/types/domain";
 
 export function MessageThread({
@@ -19,6 +20,7 @@ export function MessageThread({
   initialMessages: Message[];
 }) {
   const { messages } = useRealtimeMessages(initialMessages, currentUserId);
+  const { success: toastSuccess, error: toastError } = useToast();
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -30,25 +32,35 @@ export function MessageThread({
 
     setLoading(true);
     setError(null);
-    const response = await fetch("/api/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sender_id: currentUserId,
-        receiver_id: receiverId,
-        message: draft
-      })
-    });
 
-    const payload = await response.json();
-    if (!response.ok) {
-      setError(payload.error ?? "Unable to send message.");
+    try {
+      const response = await fetch("/api/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sender_id: currentUserId,
+          receiver_id: receiverId,
+          message: draft.trim()
+        })
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to send message.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
+
+      toastSuccess("Message sent.");
+      setDraft("");
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    setDraft("");
-    setLoading(false);
   }
 
   return (

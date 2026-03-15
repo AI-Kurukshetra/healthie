@@ -2,11 +2,15 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
 
+import { createAuditLog, fireAndForget, requireApiUser } from "@/app/api/_utils/helpers";
 import { apiError, apiSuccess } from "@/lib/api";
+import { apiLimiter, getClientKey, rateLimitResponse, writeLimiter } from "@/lib/rate-limit";
 import { listNotifications, markNotificationRead } from "@/repositories/notificationRepository";
-import { requireApiUser } from "@/app/api/_utils/helpers";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const rl = apiLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user } = await requireApiUser();
   if (!user) {
     return apiError("Unauthorized.", 401);
@@ -21,6 +25,9 @@ export async function GET() {
 }
 
 export async function PATCH(request: NextRequest) {
+  const rl = writeLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user } = await requireApiUser();
   if (!user) {
     return apiError("Unauthorized.", 401);
@@ -53,7 +60,7 @@ export async function PATCH(request: NextRequest) {
     return apiError(error.message, 400);
   }
 
+  fireAndForget(createAuditLog("notification.read", "notifications", body.id, {}, user.id));
+
   return apiSuccess(data);
 }
-
-

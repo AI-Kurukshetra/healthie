@@ -64,7 +64,7 @@ export function Sidebar({
         <p className="mb-2 px-3 text-[10px] font-bold uppercase tracking-widest text-muted/60">Menu</p>
         {items.map((item) => {
           const Icon = item.icon;
-          const active = pathname === item.href;
+          const active = pathname === item.href || pathname.startsWith(item.href + "/");
 
           return (
             <a

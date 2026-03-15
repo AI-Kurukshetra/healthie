@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/components/ui/toast";
 
 type PatientSettingsValues = {
   full_name: string;
@@ -16,10 +17,12 @@ type PatientSettingsValues = {
   phone: string;
   emergency_contact: string;
   insurance_provider: string;
+  avatar_url: string;
 };
 
 export function PatientSettingsForm({ values }: { values: PatientSettingsValues }) {
   const router = useRouter();
+  const { success: toastSuccess, error: toastError } = useToast();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -31,28 +34,39 @@ export function PatientSettingsForm({ values }: { values: PatientSettingsValues 
     setSuccess(null);
 
     const formData = new FormData(event.currentTarget);
-    const response = await fetch("/api/patients", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        full_name: String(formData.get("full_name") ?? ""),
-        date_of_birth: String(formData.get("date_of_birth") ?? "") || null,
-        phone: String(formData.get("phone") ?? "") || null,
-        emergency_contact: String(formData.get("emergency_contact") ?? "") || null,
-        insurance_provider: String(formData.get("insurance_provider") ?? "") || null
-      })
-    });
 
-    const payload = await response.json();
-    if (!response.ok) {
-      setError(payload.error ?? "Unable to update patient settings.");
+    try {
+      const response = await fetch("/api/patients", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          full_name: String(formData.get("full_name") ?? ""),
+          date_of_birth: String(formData.get("date_of_birth") ?? "").trim() || null,
+          phone: String(formData.get("phone") ?? "").trim() || null,
+          emergency_contact: String(formData.get("emergency_contact") ?? "").trim() || null,
+          insurance_provider: String(formData.get("insurance_provider") ?? "").trim() || null,
+          avatar_url: String(formData.get("avatar_url") ?? "").trim() || null
+        })
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to update patient settings.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
+
+      setSuccess("Settings updated.");
+      toastSuccess("Settings updated.");
+      router.refresh();
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    setSuccess("Settings updated.");
-    setLoading(false);
-    router.refresh();
   }
 
   return (
@@ -93,6 +107,11 @@ export function PatientSettingsForm({ values }: { values: PatientSettingsValues 
         <label className="block space-y-2 text-sm font-medium text-ink">
           <span>Insurance provider</span>
           <Textarea defaultValue={values.insurance_provider} name="insurance_provider" />
+        </label>
+
+        <label className="block space-y-2 text-sm font-medium text-ink">
+          <span>Avatar URL</span>
+          <Input defaultValue={values.avatar_url} name="avatar_url" placeholder="https://example.com/avatar.jpg" type="url" />
         </label>
 
         {error ? <p className="text-sm text-danger">{error}</p> : null}
