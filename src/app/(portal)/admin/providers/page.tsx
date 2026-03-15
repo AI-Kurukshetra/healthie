@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { AdminProviderDirectory } from "@/components/admin/admin-provider-directory";
 import type { AdminProviderRecord } from "@/components/admin/admin-provider-types";
 import { requireRole } from "@/lib/auth";

@@ -3,10 +3,11 @@ export const dynamic = "force-dynamic";
 import { NextRequest } from "next/server";
 
 import { createAuditLog, notifyUser, refreshPortalPaths, requireApiUser } from "@/app/api/_utils/helpers";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { apiError, apiSuccess } from "@/lib/api";
 import { createAppointment, listAppointments } from "@/repositories/appointmentRepository";
 import { listProviderAvailability } from "@/repositories/providerAvailabilityRepository";
-import { getPatientByUserId } from "@/repositories/userRepository";
+import { getPatientByUserId, getProviderByUserId } from "@/repositories/userRepository";
 import { generateVideoLink } from "@/services/videoService";
 import { appointmentSchema } from "@/validators/appointment";
 import type { ProviderAvailability } from "@/types/domain";
@@ -24,17 +25,35 @@ function isWithinAvailability(availability: ProviderAvailability[], scheduledAt:
 }
 
 export async function GET() {
-  const { supabase, user } = await requireApiUser();
+  const { supabase, user, profile } = await requireApiUser();
 
-  if (!user) {
+  if (!user || !profile) {
     return apiError("Unauthorized.", 401);
   }
 
-  const { data, error } = await listAppointments(supabase);
-  if (error) {
-    return apiError(error.message, 400);
+  if (profile.role === "patient") {
+    const patientQuery = await getPatientByUserId(supabase, user.id);
+    if (!patientQuery.data) {
+      return apiSuccess([]);
+    }
+    const { data, error } = await listAppointments(supabase, { patientId: patientQuery.data.id });
+    if (error) return apiError(error.message, 400);
+    return apiSuccess(data ?? []);
   }
 
+  if (profile.role === "provider") {
+    const providerQuery = await getProviderByUserId(supabase, user.id);
+    if (!providerQuery.data) {
+      return apiSuccess([]);
+    }
+    const { data, error } = await listAppointments(supabase, { providerId: providerQuery.data.id });
+    if (error) return apiError(error.message, 400);
+    return apiSuccess(data ?? []);
+  }
+
+  // Admin: return all
+  const { data, error } = await listAppointments(supabase);
+  if (error) return apiError(error.message, 400);
   return apiSuccess(data ?? []);
 }
 
@@ -57,7 +76,10 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const availabilityQuery = await listProviderAvailability(supabase, parsed.data.provider_id);
+  // Admin uses admin client to bypass RLS for insert
+  const writeClient = profile.role === "admin" ? (() => { try { return createSupabaseAdminClient() as any; } catch { return supabase; } })() : supabase;
+
+  const availabilityQuery = await listProviderAvailability(writeClient, parsed.data.provider_id);
   const availability = (availabilityQuery.data ?? []) as ProviderAvailability[];
   if (!isWithinAvailability(availability, parsed.data.scheduled_at)) {
     return apiError("Selected time is outside the provider's availability.", 400);
@@ -71,13 +93,13 @@ export async function POST(request: NextRequest) {
     video_link: generateVideoLink(appointmentId, request.url)
   };
 
-  const { data, error } = await createAppointment(supabase, payload);
+  const { data, error } = await createAppointment(writeClient, payload);
   if (error || !data) {
     return apiError(error?.message ?? "Unable to create appointment.", 400);
   }
 
-  const patientLookup = await supabase.from("patients").select("user_id").eq("id", data.patient_id).single();
-  const providerLookup = await supabase.from("providers").select("user_id").eq("id", data.provider_id).single();
+  const patientLookup = await writeClient.from("patients").select("user_id").eq("id", data.patient_id).single();
+  const providerLookup = await writeClient.from("providers").select("user_id").eq("id", data.provider_id).single();
   const patient = (patientLookup.data ?? null) as { user_id: string } | null;
   const provider = (providerLookup.data ?? null) as { user_id: string } | null;
 
@@ -89,7 +111,7 @@ export async function POST(request: NextRequest) {
     await notifyUser(provider.user_id, "appointment", "New appointment", "A new consultation has been booked.");
   }
 
-  await createAuditLog("appointment.created", "appointments", data.id, { status: data.status });
+  await createAuditLog("appointment.created", "appointments", data.id, { status: data.status }, user.id);
   refreshPortalPaths(["/patient/appointments", "/provider/appointments", "/patient/dashboard", "/provider/dashboard"]);
 
   return apiSuccess(data, { status: 201 });

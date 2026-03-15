@@ -1,5 +1,6 @@
 import type { PropsWithChildren, ReactNode } from "react";
 import Link from "next/link";
+import { ArrowLeft, Heart, ShieldCheck, CalendarDays } from "lucide-react";
 
 import { buttonVariants } from "@/components/ui/button";
 
@@ -16,39 +17,63 @@ export function AuthLayout({
   aside?: ReactNode;
 }>) {
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(63,132,244,0.16),_transparent_30%),linear-gradient(180deg,#fbfdff_0%,#f3f8fc_100%)]">
-      <div className="page-shell py-6">
-        <Link className={buttonVariants({ variant: "ghost", className: "px-0" })} href="/">
-          Back to website
-        </Link>
+    <main className="min-h-screen bg-canvas">
+      {/* Top bar */}
+      <div className="border-b border-border/60 bg-white/90 backdrop-blur-sm">
+        <div className="page-shell flex h-16 items-center justify-between">
+          <Link href="/" className="flex items-center gap-2.5">
+            <div className="gradient-bg flex h-9 w-9 items-center justify-center rounded-xl text-sm font-bold text-white">H</div>
+            <span className="text-sm font-bold text-ink">Healthie</span>
+          </Link>
+          <Link className={buttonVariants({ variant: "ghost", size: "sm" })} href="/">
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Back to website
+          </Link>
+        </div>
       </div>
-      <div className="page-shell grid gap-10 pb-20 pt-8 lg:grid-cols-[0.95fr_minmax(360px,520px)] lg:items-center">
-        <section className="space-y-6">
-          <span className="eyebrow">{kicker}</span>
-          <div className="space-y-4">
-            <h1 className="font-display text-5xl font-semibold text-ink">{title}</h1>
-            <p className="max-w-xl text-lg text-muted">{description}</p>
-          </div>
-          <div className="dashboard-panel subtle-grid overflow-hidden p-8">
+
+      {/* Content */}
+      <div className="page-shell py-12 lg:py-20">
+        <div className="mx-auto grid max-w-5xl gap-12 lg:grid-cols-[1fr_minmax(360px,440px)] lg:items-start">
+          {/* Left */}
+          <section className="hidden lg:block">
+            <span className="eyebrow">{kicker}</span>
+            <h1 className="mt-6 text-3xl font-semibold tracking-tight text-ink lg:text-4xl">{title}</h1>
+            <p className="mt-4 max-w-md text-base text-muted">{description}</p>
+
             {aside ?? (
-              <div className="space-y-4">
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-primary-deep">Built for modern care teams</p>
-                <p className="text-2xl font-semibold text-ink">Bring scheduling, records, prescriptions, and messaging into one calm operating system.</p>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-[20px] bg-white/90 p-4">
-                    <p className="text-sm font-semibold text-ink">Patients</p>
-                    <p className="mt-2 text-sm text-muted">Self-serve scheduling and access to visit history.</p>
-                  </div>
-                  <div className="rounded-[20px] bg-white/90 p-4">
-                    <p className="text-sm font-semibold text-ink">Providers</p>
-                    <p className="mt-2 text-sm text-muted">A focused workspace for clinical workflow execution.</p>
-                  </div>
-                </div>
+              <div className="mt-10 space-y-4">
+                {[
+                  { icon: CalendarDays, title: "Smart scheduling", desc: "Book and manage appointments with automated provider availability." },
+                  { icon: ShieldCheck, title: "Secure by default", desc: "Row-level security, encrypted sessions, and role-based access." },
+                  { icon: Heart, title: "Built for care teams", desc: "Patient portal, provider workspace, and admin dashboard in one platform." }
+                ].map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <div key={item.title} className="gradient-border flex items-start gap-4 rounded-xl p-4 shadow-soft">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-soft">
+                        <Icon className="h-5 w-5 text-primary" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-ink">{item.title}</p>
+                        <p className="mt-1 text-sm text-muted">{item.desc}</p>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
-          </div>
-        </section>
-        <section>{children}</section>
+          </section>
+
+          {/* Right */}
+          <section>
+            <div className="mb-8 lg:hidden">
+              <h1 className="text-2xl font-semibold tracking-tight text-ink">{title}</h1>
+              <p className="mt-2 text-sm text-muted">{description}</p>
+            </div>
+            {children}
+          </section>
+        </div>
       </div>
     </main>
   );

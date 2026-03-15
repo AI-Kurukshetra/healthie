@@ -1,6 +1,8 @@
+export const dynamic = "force-dynamic";
+
 import { AdminMedicalRecordManager } from "@/components/admin/admin-medical-record-manager";
 import { requireRole } from "@/lib/auth";
-import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { listMedicalRecords } from "@/repositories/recordRepository";
 import { listPatients, listProviders } from "@/repositories/userRepository";
 import { createMedicalDocumentSignedUrl } from "@/services/storageService";
@@ -8,7 +10,7 @@ import type { MedicalRecord, Patient, Provider } from "@/types/domain";
 
 export default async function AdminRecordsPage() {
   await requireRole("admin");
-  const supabase = createSupabaseServerComponentClient();
+  const supabase = createSupabaseAdminClient() as any;
   const [recordsQuery, patientsQuery, providersQuery] = await Promise.all([
     listMedicalRecords(supabase),
     listPatients(supabase),
@@ -18,10 +20,21 @@ export default async function AdminRecordsPage() {
   const records = (recordsQuery.data ?? []) as MedicalRecord[];
   const patients = (patientsQuery.data ?? []) as Patient[];
   const providers = (providersQuery.data ?? []) as Provider[];
-  const recordsWithLinks = await Promise.all(records.map(async (record) => ({
+  const recordsWithLinks = records.map((record) => ({
     ...record,
-    documentUrl: record.document_path ? await createMedicalDocumentSignedUrl(record.document_path) : null
-  })));
+    documentUrl: null as string | null
+  }));
+
+  // Generate signed URLs without blocking render — failures are non-fatal
+  for (const record of recordsWithLinks) {
+    if (record.document_path) {
+      try {
+        record.documentUrl = await createMedicalDocumentSignedUrl(record.document_path);
+      } catch {
+        // ignore — document link will be null
+      }
+    }
+  }
 
   return <AdminMedicalRecordManager patients={patients as any} providers={providers as any} records={recordsWithLinks} />;
 }

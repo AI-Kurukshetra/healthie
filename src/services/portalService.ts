@@ -5,15 +5,16 @@ import { listMedicalRecords } from "@/repositories/recordRepository";
 import { listPatients, listProviders } from "@/repositories/userRepository";
 import type { SupabaseTypedClient } from "@/repositories/base";
 import { summarizeAppointments, summarizePatientPortal } from "@/services/dashboardService";
-import { ensureAppointmentReminderNotifications } from "@/services/notificationService";
 import type { Appointment, MedicalRecord, Notification, Patient, Prescription, Provider } from "@/types/domain";
+
+const DASHBOARD_LIMIT = 50;
 
 export async function getPatientDashboardData(client: SupabaseTypedClient, patientId: string, userId: string) {
   const [appointmentsQuery, recordsQuery, prescriptionsQuery, notificationsQuery] = await Promise.all([
-    listAppointments(client, { patientId }),
-    listMedicalRecords(client, patientId),
-    listPrescriptions(client, patientId),
-    listNotifications(client, userId)
+    listAppointments(client, { patientId, limit: DASHBOARD_LIMIT }),
+    listMedicalRecords(client, patientId, { limit: DASHBOARD_LIMIT }),
+    listPrescriptions(client, patientId, { limit: DASHBOARD_LIMIT }),
+    listNotifications(client, userId, { limit: 30 })
   ]);
 
   const appointments = (appointmentsQuery.data ?? []) as Appointment[];
@@ -31,30 +32,34 @@ export async function getPatientDashboardData(client: SupabaseTypedClient, patie
 }
 
 export async function getProviderDashboardData(client: SupabaseTypedClient, providerId: string) {
-  const [appointmentsQuery, patientsQuery, prescriptionsQuery] = await Promise.all([
-    listAppointments(client, { providerId }),
-    listPatients(client),
-    listPrescriptions(client)
+  const [appointmentsQuery, prescriptionsQuery] = await Promise.all([
+    listAppointments(client, { providerId, limit: DASHBOARD_LIMIT }),
+    listPrescriptions(client, undefined, { limit: DASHBOARD_LIMIT })
   ]);
 
   const appointments = (appointmentsQuery.data ?? []) as Appointment[];
-  const patients = (patientsQuery.data ?? []) as Patient[];
   const prescriptions = (prescriptionsQuery.data ?? []) as Prescription[];
+
+  // Derive patients from appointments rather than loading the entire patient table
+  const uniquePatientIds = [...new Set(appointments.map((a) => a.patient_id))];
+
+  // Only fetch providers own prescriptions
+  const providerPrescriptions = prescriptions.filter((item) => item.provider_id === providerId);
 
   return {
     appointments,
-    patients,
-    prescriptions: prescriptions.filter((item) => item.provider_id === providerId),
+    patientIds: uniquePatientIds,
+    prescriptions: providerPrescriptions,
     summary: summarizeAppointments(appointments)
   };
 }
 
 export async function getAdminDashboardData(client: SupabaseTypedClient) {
   const [patientsQuery, providersQuery, appointmentsQuery, prescriptionsQuery] = await Promise.all([
-    listPatients(client),
-    listProviders(client),
-    listAppointments(client),
-    listPrescriptions(client)
+    listPatients(client, { limit: DASHBOARD_LIMIT }),
+    listProviders(client, { limit: DASHBOARD_LIMIT }),
+    listAppointments(client, { limit: DASHBOARD_LIMIT }),
+    listPrescriptions(client, undefined, { limit: DASHBOARD_LIMIT })
   ]);
 
   return {

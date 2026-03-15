@@ -132,12 +132,12 @@ function getPrivilegedClient() {
   }
 }
 
-export async function createAuditLog(action: string, entityType: string, entityId: string | null, metadata: Record<string, unknown>) {
-  const { user } = await requireApiUser();
+// Accept actorId directly so callers don't trigger a second requireApiUser() round-trip
+export async function createAuditLog(action: string, entityType: string, entityId: string | null, metadata: Record<string, unknown>, actorId?: string | null) {
   const client = getPrivilegedClient();
 
   await (client.from("audit_logs") as any).insert({
-    actor_id: user?.id ?? null,
+    actor_id: actorId ?? null,
     action,
     entity_type: entityType,
     entity_id: entityId,

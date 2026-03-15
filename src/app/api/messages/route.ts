@@ -4,8 +4,16 @@ import { NextRequest } from "next/server";
 
 import { createAuditLog, notifyUser, refreshPortalPaths, requireApiUser } from "@/app/api/_utils/helpers";
 import { apiError, apiSuccess } from "@/lib/api";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createMessage, listMessages } from "@/repositories/messageRepository";
 import { messageSchema } from "@/validators/message";
+
+function getWriteClient(role: string, fallback: any) {
+  if (role === "admin") {
+    try { return createSupabaseAdminClient() as any; } catch { return fallback; }
+  }
+  return fallback;
+}
 
 export async function GET(request: NextRequest) {
   const { supabase, user } = await requireApiUser();
@@ -23,18 +31,19 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const { supabase, user } = await requireApiUser();
-  if (!user) {
+  const { supabase, user, profile } = await requireApiUser();
+  if (!user || !profile) {
     return apiError("Unauthorized.", 401);
   }
 
+  const client = getWriteClient(profile.role, supabase);
   const body = await request.json();
   const parsed = messageSchema.safeParse(body);
   if (!parsed.success) {
     return apiError(parsed.error.issues[0]?.message ?? "Invalid message payload.");
   }
 
-  const { data, error } = await createMessage(supabase, parsed.data);
+  const { data, error } = await createMessage(client, parsed.data);
   if (error || !data) {
     return apiError(error?.message ?? "Unable to send message.", 400);
   }
@@ -51,12 +60,13 @@ export async function PATCH(request: NextRequest) {
     return apiError("Unauthorized.", 401);
   }
 
+  const client = getWriteClient(profile.role, supabase);
   const body = await request.json();
   if (!body.id || !body.message) {
     return apiError("Message id and message text are required.");
   }
 
-  const existingQuery = await supabase.from("messages").select("*").eq("id", body.id).maybeSingle();
+  const existingQuery = await client.from("messages").select("*").eq("id", body.id).maybeSingle();
   const existing = existingQuery.data as { id: string; sender_id: string; receiver_id: string } | null;
   if (!existing) {
     return apiError("Message not found.", 404);
@@ -66,7 +76,7 @@ export async function PATCH(request: NextRequest) {
     return apiError("Forbidden.", 403);
   }
 
-  const { data, error } = await (supabase.from("messages") as any)
+  const { data, error } = await (client.from("messages") as any)
     .update({ message: String(body.message) })
     .eq("id", body.id)
     .select("*")
@@ -87,12 +97,13 @@ export async function DELETE(request: NextRequest) {
     return apiError("Unauthorized.", 401);
   }
 
+  const client = getWriteClient(profile.role, supabase);
   const body = await request.json();
   if (!body.id) {
     return apiError("Message id is required.");
   }
 
-  const existingQuery = await supabase.from("messages").select("*").eq("id", body.id).maybeSingle();
+  const existingQuery = await client.from("messages").select("*").eq("id", body.id).maybeSingle();
   const existing = existingQuery.data as { id: string; sender_id: string } | null;
   if (!existing) {
     return apiError("Message not found.", 404);
@@ -102,7 +113,7 @@ export async function DELETE(request: NextRequest) {
     return apiError("Forbidden.", 403);
   }
 
-  const { error } = await supabase.from("messages").delete().eq("id", body.id);
+  const { error } = await client.from("messages").delete().eq("id", body.id);
   if (error) {
     return apiError(error.message, 400);
   }

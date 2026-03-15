@@ -4,11 +4,19 @@ import { NextRequest } from "next/server";
 
 import { createAuditLog, refreshPortalPaths, requireApiUser } from "@/app/api/_utils/helpers";
 import { apiError, apiSuccess } from "@/lib/api";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createClinicalNote, createMedicalRecord, listMedicalRecords } from "@/repositories/recordRepository";
-import { getProviderByUserId } from "@/repositories/userRepository";
+import { getPatientByUserId, getProviderByUserId } from "@/repositories/userRepository";
 import { uploadMedicalDocument } from "@/services/storageService";
 import { clinicalNoteSchema } from "@/validators/clinical-note";
 import { medicalRecordSchema } from "@/validators/medical-record";
+
+function getWriteClient(role: string, fallback: any) {
+  if (role === "admin") {
+    try { return createSupabaseAdminClient() as any; } catch { return fallback; }
+  }
+  return fallback;
+}
 
 async function parseMedicalRecordRequest(request: NextRequest) {
   const contentType = request.headers.get("content-type") ?? "";
@@ -38,16 +46,23 @@ async function parseMedicalRecordRequest(request: NextRequest) {
 }
 
 export async function GET() {
-  const { supabase, user } = await requireApiUser();
-  if (!user) {
+  const { supabase, user, profile } = await requireApiUser();
+  if (!user || !profile) {
     return apiError("Unauthorized.", 401);
   }
 
-  const { data, error } = await listMedicalRecords(supabase);
-  if (error) {
-    return apiError(error.message, 400);
+  if (profile.role === "patient") {
+    const patientQuery = await getPatientByUserId(supabase, user.id);
+    if (!patientQuery.data) return apiSuccess([]);
+    const { data, error } = await listMedicalRecords(supabase, patientQuery.data.id);
+    if (error) return apiError(error.message, 400);
+    return apiSuccess(data ?? []);
   }
 
+  // Providers and admins can list all records
+  const readClient = getWriteClient(profile.role, supabase);
+  const { data, error } = await listMedicalRecords(readClient);
+  if (error) return apiError(error.message, 400);
   return apiSuccess(data ?? []);
 }
 
@@ -57,6 +72,7 @@ export async function POST(request: NextRequest) {
     return apiError("Unauthorized.", 401);
   }
 
+  const client = getWriteClient(profile.role, supabase);
   const contentType = request.headers.get("content-type") ?? "";
 
   if (contentType.includes("application/json")) {
@@ -98,7 +114,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const { data, error } = await createClinicalNote(supabase, parsed.data);
+      const { data, error } = await createClinicalNote(client, parsed.data);
       if (error || !data) {
         return apiError(error?.message ?? "Unable to create clinical note.", 400);
       }
@@ -141,7 +157,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const { data, error } = await createMedicalRecord(supabase, {
+    const { data, error } = await createMedicalRecord(client, {
       ...parsed.data,
       provider_id: providerId
     });
@@ -189,7 +205,7 @@ export async function POST(request: NextRequest) {
       }
   }
 
-  const patientQuery = await supabase
+  const patientQuery = await client
     .from("patients")
     .select("id, user_id")
     .eq("id", parsed.data.patient_id)
@@ -217,7 +233,7 @@ export async function POST(request: NextRequest) {
     documentPath = upload.data;
   }
 
-  const { data, error } = await createMedicalRecord(supabase, {
+  const { data, error } = await createMedicalRecord(client, {
     id: recordId,
     ...parsed.data,
     provider_id: providerId,
@@ -242,13 +258,14 @@ export async function PATCH(request: NextRequest) {
     return apiError("Unauthorized.", 401);
   }
 
+  const client = getWriteClient(profile.role, supabase);
   const body = await request.json();
   if (!body.id || !body.type) {
     return apiError("Record id and type are required.");
   }
 
   if (body.type === "clinical_note") {
-    const existingQuery = await supabase.from("clinical_notes").select("*").eq("id", body.id).maybeSingle();
+    const existingQuery = await client.from("clinical_notes").select("*").eq("id", body.id).maybeSingle();
     const existing = existingQuery.data as { id: string; provider_id: string } | null;
     if (!existing) {
       return apiError("Clinical note not found.", 404);
@@ -277,7 +294,7 @@ export async function PATCH(request: NextRequest) {
       return apiError(parsed.error.issues[0]?.message ?? "Invalid clinical note payload.");
     }
 
-    const { data, error } = await (supabase.from("clinical_notes") as any)
+    const { data, error } = await (client.from("clinical_notes") as any)
       .update(parsed.data)
       .eq("id", body.id)
       .select("*")
@@ -293,7 +310,7 @@ export async function PATCH(request: NextRequest) {
   }
 
   if (body.type === "medical_record") {
-    const existingQuery = await supabase.from("medical_records").select("*").eq("id", body.id).maybeSingle();
+    const existingQuery = await client.from("medical_records").select("*").eq("id", body.id).maybeSingle();
     const existing = existingQuery.data as { id: string; provider_id: string | null } | null;
     if (!existing) {
       return apiError("Medical record not found.", 404);
@@ -321,7 +338,7 @@ export async function PATCH(request: NextRequest) {
       return apiError(parsed.error.issues[0]?.message ?? "Invalid medical record payload.");
     }
 
-    const { data, error } = await (supabase.from("medical_records") as any)
+    const { data, error } = await (client.from("medical_records") as any)
       .update(parsed.data)
       .eq("id", body.id)
       .select("*")
@@ -345,13 +362,14 @@ export async function DELETE(request: NextRequest) {
     return apiError("Unauthorized.", 401);
   }
 
+  const client = getWriteClient(profile.role, supabase);
   const body = await request.json();
   if (!body.id || !body.type) {
     return apiError("Record id and type are required.");
   }
 
   if (body.type === "clinical_note") {
-    const existingQuery = await supabase.from("clinical_notes").select("*").eq("id", body.id).maybeSingle();
+    const existingQuery = await client.from("clinical_notes").select("*").eq("id", body.id).maybeSingle();
     const existing = existingQuery.data as { id: string; provider_id: string } | null;
     if (!existing) {
       return apiError("Clinical note not found.", 404);
@@ -366,7 +384,7 @@ export async function DELETE(request: NextRequest) {
       return apiError("Forbidden.", 403);
     }
 
-    const { error } = await supabase.from("clinical_notes").delete().eq("id", body.id);
+    const { error } = await client.from("clinical_notes").delete().eq("id", body.id);
     if (error) {
       return apiError(error.message, 400);
     }
@@ -377,7 +395,7 @@ export async function DELETE(request: NextRequest) {
   }
 
   if (body.type === "medical_record") {
-    const existingQuery = await supabase.from("medical_records").select("*").eq("id", body.id).maybeSingle();
+    const existingQuery = await client.from("medical_records").select("*").eq("id", body.id).maybeSingle();
     const existing = existingQuery.data as { id: string; provider_id: string | null } | null;
     if (!existing) {
       return apiError("Medical record not found.", 404);
@@ -392,7 +410,7 @@ export async function DELETE(request: NextRequest) {
       return apiError("Forbidden.", 403);
     }
 
-    const { error } = await supabase.from("medical_records").delete().eq("id", body.id);
+    const { error } = await client.from("medical_records").delete().eq("id", body.id);
     if (error) {
       return apiError(error.message, 400);
     }

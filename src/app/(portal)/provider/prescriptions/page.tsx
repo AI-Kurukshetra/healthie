@@ -20,13 +20,11 @@ export default async function ProviderPrescriptionsPage() {
   }
 
   const [prescriptionsQuery, patientsQuery] = await Promise.all([
-    listPrescriptions(supabase),
+    supabase.from("prescriptions").select("*").eq("provider_id", provider.id).order("created_at", { ascending: false }).limit(100),
     listPatients(supabase)
   ]);
-  const prescriptions = (prescriptionsQuery.data ?? []) as Prescription[];
+  const providerPrescriptions = (prescriptionsQuery.data ?? []) as Prescription[];
   const patients = (patientsQuery.data ?? []) as Patient[];
-
-  const providerPrescriptions = prescriptions.filter((prescription) => prescription.provider_id === provider.id);
 
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_0.95fr]">

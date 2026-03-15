@@ -1,34 +1,62 @@
-import { Card } from "@/components/ui/card";
+import type { LucideIcon } from "lucide-react";
+
 import { cn } from "@/lib/utils";
 
 export function DashboardCard({
   title,
   value,
   description,
+  icon: Icon,
   tone = "default"
 }: {
   title: string;
   value: string | number;
   description: string;
-  tone?: "default" | "accent";
+  icon?: LucideIcon;
+  tone?: "default" | "accent" | "success" | "warning" | "danger";
 }) {
+  const toneStyles = {
+    default: {
+      card: "bg-white border-border",
+      icon: "bg-slate-100 text-slate-600",
+      value: "text-ink"
+    },
+    accent: {
+      card: "bg-gradient-to-br from-blue-600 to-blue-500 border-blue-500 text-white",
+      icon: "bg-white/20 text-white",
+      value: "text-white"
+    },
+    success: {
+      card: "bg-white border-emerald-200",
+      icon: "bg-emerald-50 text-emerald-600",
+      value: "text-emerald-700"
+    },
+    warning: {
+      card: "bg-white border-amber-200",
+      icon: "bg-amber-50 text-amber-600",
+      value: "text-amber-700"
+    },
+    danger: {
+      card: "bg-white border-red-200",
+      icon: "bg-red-50 text-red-600",
+      value: "text-red-700"
+    }
+  }[tone];
+
   return (
-    <Card
-      className={cn(
-        "overflow-hidden border-white/70",
-        tone === "accent"
-          ? "bg-[linear-gradient(135deg,rgba(34,93,188,1)_0%,rgba(63,132,244,0.95)_55%,rgba(126,176,255,0.92)_100%)] text-white"
-          : "bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(246,250,253,0.98)_100%)]"
-      )}
-    >
-      <div className="p-6">
-        <div className="flex items-center justify-between gap-3">
-          <p className={tone === "accent" ? "text-white/80" : "text-sm text-muted"}>{title}</p>
-          <span className={cn("h-2.5 w-2.5 rounded-full", tone === "accent" ? "bg-white/80" : "bg-primary/70")} />
+    <div className={cn("rounded-2xl border p-6 shadow-card transition-shadow hover:shadow-elevated", toneStyles.card)}>
+      <div className="flex items-start justify-between">
+        <div>
+          <p className={cn("text-sm font-medium", tone === "accent" ? "text-white/80" : "text-muted")}>{title}</p>
+          <p className={cn("mt-3 text-4xl font-extrabold tracking-tight", toneStyles.value)}>{value}</p>
+          <p className={cn("mt-2 text-sm", tone === "accent" ? "text-white/70" : "text-muted")}>{description}</p>
         </div>
-        <p className="mt-5 font-display text-4xl font-semibold">{value}</p>
-        <p className={tone === "accent" ? "mt-3 text-sm text-white/80" : "mt-3 text-sm leading-6 text-muted"}>{description}</p>
+        {Icon && (
+          <div className={cn("flex h-12 w-12 items-center justify-center rounded-xl", toneStyles.icon)}>
+            <Icon className="h-6 w-6" />
+          </div>
+        )}
       </div>
-    </Card>
+    </div>
   );
 }

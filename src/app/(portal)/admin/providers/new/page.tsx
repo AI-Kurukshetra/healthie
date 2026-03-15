@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { AdminProviderEditor } from "@/components/admin/admin-provider-editor";
 import { requireRole } from "@/lib/auth";
 

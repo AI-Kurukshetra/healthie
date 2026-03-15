@@ -1,7 +1,10 @@
-﻿import type { SupabaseTypedClient } from "@/repositories/base";
+import type { SupabaseTypedClient } from "@/repositories/base";
 
-export async function listMessages(client: SupabaseTypedClient, userId: string, peerId?: string) {
-  let query = client.from("messages").select("*").order("created_at", { ascending: true });
+const MESSAGE_COLUMNS = "id, sender_id, receiver_id, message, created_at" as const;
+const DEFAULT_LIMIT = 200;
+
+export async function listMessages(client: SupabaseTypedClient, userId: string, peerId?: string, options?: { limit?: number }) {
+  let query = client.from("messages").select(MESSAGE_COLUMNS).order("created_at", { ascending: true }).limit(options?.limit ?? DEFAULT_LIMIT);
 
   if (peerId) {
     query = query.or(
@@ -15,5 +18,5 @@ export async function listMessages(client: SupabaseTypedClient, userId: string, 
 }
 
 export async function createMessage(client: SupabaseTypedClient, payload: Record<string, unknown>) {
-  return (client.from("messages") as any).insert(payload).select("*").single();
+  return (client.from("messages") as any).insert(payload).select(MESSAGE_COLUMNS).single();
 }

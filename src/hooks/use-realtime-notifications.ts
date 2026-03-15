@@ -42,18 +42,7 @@ export function useRealtimeNotifications(initialNotifications: Notification[], c
       )
       .subscribe();
 
-    const interval = window.setInterval(async () => {
-      const response = await fetch("/api/notifications", { cache: "no-store" });
-      if (!response.ok) {
-        return;
-      }
-
-      const payload = await response.json();
-      setNotifications(sortNotifications((payload.data ?? []) as Notification[]));
-    }, 30000);
-
     return () => {
-      window.clearInterval(interval);
       void supabase.removeChannel(channel);
     };
   }, [currentUserId]);

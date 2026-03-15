@@ -6,6 +6,12 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import type { Notification } from "@/types/domain";
 
+const typeIcon: Record<string, string> = {
+  appointment: "bg-blue-50 text-blue-600",
+  message: "bg-emerald-50 text-emerald-600",
+  prescription: "bg-purple-50 text-purple-600"
+};
+
 export function NotificationRail({
   notifications,
   onMarkAsRead,
@@ -15,46 +21,54 @@ export function NotificationRail({
   onMarkAsRead: (id: string) => Promise<void>;
   compact?: boolean;
 }) {
+  const displayed = notifications.slice(0, compact ? 8 : 5);
+  const unread = notifications.filter((n) => !n.read_at).length;
+
   return (
-    <Card className={compact ? "p-4" : "p-5"}>
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary-deep">Notification area</p>
-        <h3 className="mt-2 text-lg font-semibold text-ink">Recent activity</h3>
+    <Card className="p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-ink">Notifications</h3>
+        {unread > 0 && (
+          <span className="inline-flex items-center justify-center rounded-full bg-primary px-2 py-0.5 text-[11px] font-bold text-white">
+            {unread}
+          </span>
+        )}
       </div>
-      <div className={compact ? "mt-4 space-y-2" : "mt-5 space-y-3"}>
-        {notifications.length === 0 ? (
-          <div className="rounded-[20px] border border-dashed border-border p-4 text-sm text-muted">No recent notifications.</div>
+
+      <div className="mt-3 space-y-1.5">
+        {displayed.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted">All caught up</div>
         ) : (
-          notifications.slice(0, compact ? 8 : 6).map((notification) => (
+          displayed.map((notification) => (
             <button
               key={notification.id}
-              className={compact ? "w-full rounded-[18px] border border-border bg-surface-muted p-3 text-left" : "w-full rounded-[20px] border border-border bg-surface-muted p-4 text-left"}
+              className="w-full rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-surface-muted"
               onClick={() => void onMarkAsRead(notification.id)}
               type="button"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-ink">{notification.title}</p>
-                  <p className="mt-1 text-sm text-muted">{notification.body}</p>
-                </div>
-                <div className="shrink-0 text-right">
-                  <p className="text-xs text-muted">{formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}</p>
-                  {!notification.read_at ? (
-                    <span className="mt-2 inline-flex rounded-pill bg-primary-soft px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-primary-deep">
-                      New
-                    </span>
-                  ) : null}
+              <div className="flex items-start gap-2.5">
+                <div className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${notification.read_at ? "bg-transparent" : "bg-primary"}`} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-ink">{notification.title}</p>
+                  <p className="mt-0.5 text-xs text-muted line-clamp-2">{notification.body}</p>
+                  <p className="mt-1 text-[11px] text-muted/70">{formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}</p>
                 </div>
               </div>
             </button>
           ))
         )}
       </div>
-      {notifications.length > 0 ? (
-        <Button className="mt-4 w-full" onClick={() => void Promise.all(notifications.filter((item) => !item.read_at).map((item) => onMarkAsRead(item.id)))} size="sm" variant="ghost">
-          Mark all as read
+
+      {unread > 0 && (
+        <Button
+          className="mt-3 w-full"
+          onClick={() => void Promise.all(notifications.filter((n) => !n.read_at).map((n) => onMarkAsRead(n.id)))}
+          size="sm"
+          variant="ghost"
+        >
+          Mark all read
         </Button>
-      ) : null}
+      )}
     </Card>
   );
 }

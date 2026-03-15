@@ -4,21 +4,35 @@ import { NextRequest } from "next/server";
 
 import { createAuditLog, notifyUser, refreshPortalPaths, requireApiUser } from "@/app/api/_utils/helpers";
 import { apiError, apiSuccess } from "@/lib/api";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createPrescription, listPrescriptions } from "@/repositories/prescriptionRepository";
-import { getProviderByUserId } from "@/repositories/userRepository";
+import { getPatientByUserId, getProviderByUserId } from "@/repositories/userRepository";
 import { prescriptionSchema } from "@/validators/prescription";
 
+function getWriteClient(role: string, fallback: any) {
+  if (role === "admin") {
+    try { return createSupabaseAdminClient() as any; } catch { return fallback; }
+  }
+  return fallback;
+}
+
 export async function GET() {
-  const { supabase, user } = await requireApiUser();
-  if (!user) {
+  const { supabase, user, profile } = await requireApiUser();
+  if (!user || !profile) {
     return apiError("Unauthorized.", 401);
   }
 
-  const { data, error } = await listPrescriptions(supabase);
-  if (error) {
-    return apiError(error.message, 400);
+  if (profile.role === "patient") {
+    const patientQuery = await getPatientByUserId(supabase, user.id);
+    if (!patientQuery.data) return apiSuccess([]);
+    const { data, error } = await listPrescriptions(supabase, patientQuery.data.id);
+    if (error) return apiError(error.message, 400);
+    return apiSuccess(data ?? []);
   }
 
+  // Providers and admins can list all (RLS still scopes at DB level)
+  const { data, error } = await listPrescriptions(supabase);
+  if (error) return apiError(error.message, 400);
   return apiSuccess(data ?? []);
 }
 
@@ -28,6 +42,7 @@ export async function POST(request: NextRequest) {
     return apiError("Unauthorized.", 401);
   }
 
+  const client = getWriteClient(profile.role, supabase);
   const body = await request.json();
   const parsed = prescriptionSchema.safeParse(body);
   if (!parsed.success) {
@@ -59,12 +74,12 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const { data, error } = await createPrescription(supabase, parsed.data);
+  const { data, error } = await createPrescription(client, parsed.data);
   if (error || !data) {
     return apiError(error?.message ?? "Unable to create prescription.", 400);
   }
 
-  const patientQuery = await supabase.from("patients").select("user_id").eq("id", data.patient_id).single();
+  const patientQuery = await client.from("patients").select("user_id").eq("id", data.patient_id).single();
   const patient = (patientQuery.data ?? null) as { user_id: string } | null;
   if (patient?.user_id) {
     await notifyUser(patient.user_id, "prescription", "New prescription", `${data.medication_name} has been issued.`);
@@ -81,12 +96,13 @@ export async function PATCH(request: NextRequest) {
     return apiError("Unauthorized.", 401);
   }
 
+  const client = getWriteClient(profile.role, supabase);
   const body = await request.json();
   if (!body.id) {
     return apiError("Prescription id is required.");
   }
 
-  const existingQuery = await supabase.from("prescriptions").select("*").eq("id", body.id).maybeSingle();
+  const existingQuery = await client.from("prescriptions").select("*").eq("id", body.id).maybeSingle();
   const existing = existingQuery.data as { id: string; provider_id: string; patient_id: string } | null;
   if (!existing) {
     return apiError("Prescription not found.", 404);
@@ -115,7 +131,7 @@ export async function PATCH(request: NextRequest) {
     return apiError(parsed.error.issues[0]?.message ?? "Invalid prescription payload.");
   }
 
-  const { data, error } = await (supabase.from("prescriptions") as any)
+  const { data, error } = await (client.from("prescriptions") as any)
     .update(parsed.data)
     .eq("id", body.id)
     .select("*")
@@ -125,7 +141,7 @@ export async function PATCH(request: NextRequest) {
     return apiError(error.message, 400);
   }
 
-  const patientQuery = await supabase.from("patients").select("user_id").eq("id", data.patient_id).single();
+  const patientQuery = await client.from("patients").select("user_id").eq("id", data.patient_id).single();
   const patient = (patientQuery.data ?? null) as { user_id: string } | null;
   if (patient?.user_id) {
     await notifyUser(patient.user_id, "prescription", "Prescription updated", `${data.medication_name} has been updated.`);
@@ -142,12 +158,13 @@ export async function DELETE(request: NextRequest) {
     return apiError("Unauthorized.", 401);
   }
 
+  const client = getWriteClient(profile.role, supabase);
   const body = await request.json();
   if (!body.id) {
     return apiError("Prescription id is required.");
   }
 
-  const existingQuery = await supabase.from("prescriptions").select("*").eq("id", body.id).maybeSingle();
+  const existingQuery = await client.from("prescriptions").select("*").eq("id", body.id).maybeSingle();
   const existing = existingQuery.data as { id: string; provider_id: string; patient_id: string } | null;
   if (!existing) {
     return apiError("Prescription not found.", 404);
@@ -162,7 +179,7 @@ export async function DELETE(request: NextRequest) {
     return apiError("Forbidden.", 403);
   }
 
-  const { error } = await supabase.from("prescriptions").delete().eq("id", body.id);
+  const { error } = await client.from("prescriptions").delete().eq("id", body.id);
   if (error) {
     return apiError(error.message, 400);
   }

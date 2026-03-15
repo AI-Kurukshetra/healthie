@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { notFound } from "next/navigation";
 
 import { AdminProviderEditor } from "@/components/admin/admin-provider-editor";

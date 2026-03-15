@@ -8,17 +8,17 @@ type ButtonProps = PropsWithChildren<ButtonHTMLAttributes<HTMLButtonElement>> & 
 };
 
 const variantClasses = {
-  primary: "bg-primary text-white shadow-soft hover:bg-primary-deep",
-  secondary: "border border-border bg-white text-ink hover:border-border-strong hover:bg-surface-muted",
+  primary: "bg-primary text-white shadow-soft hover:bg-primary-deep hover:shadow-glow",
+  secondary: "border border-border bg-white text-ink hover:border-primary/20 hover:bg-primary-soft/30",
   ghost: "bg-transparent text-muted hover:bg-surface-muted hover:text-ink",
   danger: "bg-danger text-white hover:bg-rose-700",
   subtle: "bg-primary-soft text-primary-deep hover:bg-primary-soft/80"
 } satisfies Record<NonNullable<ButtonProps["variant"]>, string>;
 
 const sizeClasses = {
-  sm: "h-10 rounded-pill px-4 text-sm",
-  md: "h-11 rounded-pill px-5 text-sm",
-  lg: "h-12 rounded-pill px-6 text-sm"
+  sm: "h-9 rounded-lg px-4 text-sm",
+  md: "h-11 rounded-xl px-5 text-sm",
+  lg: "h-12 rounded-xl px-6 text-sm"
 } satisfies Record<NonNullable<ButtonProps["size"]>, string>;
 
 export function buttonVariants({
@@ -31,7 +31,7 @@ export function buttonVariants({
   className?: string;
 }) {
   return cn(
-    "inline-flex items-center justify-center gap-2 font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 disabled:cursor-not-allowed disabled:opacity-60",
+    "inline-flex items-center justify-center gap-2 font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 disabled:cursor-not-allowed disabled:opacity-60",
     variantClasses[variant],
     sizeClasses[size],
     className

@@ -1,6 +1,8 @@
+export const dynamic = "force-dynamic";
+
 import { AdminClinicalNoteManager } from "@/components/admin/admin-clinical-note-manager";
 import { requireRole } from "@/lib/auth";
-import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { listAppointments } from "@/repositories/appointmentRepository";
 import { listClinicalNotes } from "@/repositories/recordRepository";
 import { listPatients, listProviders } from "@/repositories/userRepository";
@@ -8,7 +10,7 @@ import type { Appointment, ClinicalNote, Patient, Provider } from "@/types/domai
 
 export default async function AdminNotesPage() {
   await requireRole("admin");
-  const supabase = createSupabaseServerComponentClient();
+  const supabase = createSupabaseAdminClient() as any;
   const [notesQuery, appointmentsQuery, patientsQuery, providersQuery] = await Promise.all([
     listClinicalNotes(supabase),
     listAppointments(supabase),

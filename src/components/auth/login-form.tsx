@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
+import { Lock, Mail } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { loginSchema } from "@/validators/auth";
 
@@ -34,9 +34,7 @@ export function LoginForm() {
     try {
       const response = await fetch("/api/auth/login", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(parsed.data)
       });
       const payload = await response.json().catch(() => null);
@@ -59,33 +57,52 @@ export function LoginForm() {
   });
 
   return (
-    <Card className="p-8 sm:p-10">
-      <div>
-        <h1 className="font-display text-4xl font-semibold text-ink">Sign in</h1>
-        <p className="mt-3 text-sm text-muted">Access patient, provider, or admin workflows with your existing account.</p>
+    <div className="gradient-border rounded-2xl bg-white p-6 shadow-card sm:p-8">
+      <div className="text-center">
+        <div className="gradient-bg mx-auto flex h-12 w-12 items-center justify-center rounded-2xl">
+          <Lock className="h-6 w-6 text-white" />
+        </div>
+        <h2 className="mt-4 text-2xl font-semibold text-ink">Welcome back</h2>
+        <p className="mt-1 text-sm text-muted">Sign in to access your care workspace.</p>
       </div>
 
-      <form className="mt-8 space-y-5" onSubmit={onSubmit}>
-        <label className="block space-y-2 text-sm font-medium text-ink">
-          <span>Email</span>
-          <Input placeholder="name@clinic.com" type="email" {...register("email")} />
-        </label>
+      <form className="mt-8 space-y-4" onSubmit={onSubmit}>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-ink" htmlFor="login-email">Email</label>
+          <div className="relative">
+            <Mail className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted/50" />
+            <Input className="pl-10" id="login-email" placeholder="name@clinic.com" type="email" {...register("email")} />
+          </div>
+        </div>
 
-        <label className="block space-y-2 text-sm font-medium text-ink">
-          <span>Password</span>
-          <Input placeholder="Enter password" type="password" {...register("password")} />
-        </label>
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium text-ink" htmlFor="login-password">Password</label>
+          </div>
+          <div className="relative">
+            <Lock className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted/50" />
+            <Input className="pl-10" id="login-password" placeholder="Enter your password" type="password" {...register("password")} />
+          </div>
+        </div>
 
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        {error && (
+          <div className="flex items-center gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-danger">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" />
+            {error}
+          </div>
+        )}
 
-        <Button className="w-full" disabled={loading} size="lg" type="submit">
-          {loading ? "Signing in..." : "Continue to workspace"}
+        <Button className="w-full" disabled={loading} type="submit">
+          {loading ? "Signing in..." : "Sign in"}
         </Button>
       </form>
 
-      <p className="mt-6 text-sm text-muted">
-        Need an account? <Link className="font-semibold text-primary-deep" href="/signup">Create one here</Link>
-      </p>
-    </Card>
+      <div className="mt-8 text-center text-sm text-muted">
+        Don&apos;t have an account?{" "}
+        <Link className="font-semibold text-primary hover:underline" href="/signup">
+          Create one
+        </Link>
+      </div>
+    </div>
   );
 }

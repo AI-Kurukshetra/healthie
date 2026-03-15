@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { AdminPatientDirectory } from "@/components/admin/admin-patient-directory";
 import type { AdminPatientRecord } from "@/components/admin/admin-patient-types";
 import { requireRole } from "@/lib/auth";

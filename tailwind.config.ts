@@ -19,13 +19,17 @@ const config: Config = {
         primary: "rgb(var(--color-primary) / <alpha-value>)",
         "primary-deep": "rgb(var(--color-primary-deep) / <alpha-value>)",
         "primary-soft": "rgb(var(--color-primary-soft) / <alpha-value>)",
+        accent: "rgb(var(--color-accent) / <alpha-value>)",
         success: "rgb(var(--color-success) / <alpha-value>)",
         warning: "rgb(var(--color-warning) / <alpha-value>)",
-        danger: "rgb(var(--color-danger) / <alpha-value>)"
+        danger: "rgb(var(--color-danger) / <alpha-value>)",
+        navy: "#0c0f2e"
       },
       boxShadow: {
         card: "var(--shadow-card)",
-        soft: "var(--shadow-soft)"
+        soft: "var(--shadow-soft)",
+        elevated: "var(--shadow-elevated)",
+        glow: "var(--shadow-glow)"
       },
       borderRadius: {
         card: "var(--radius-card)",

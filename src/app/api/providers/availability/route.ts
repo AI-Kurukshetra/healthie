@@ -70,6 +70,23 @@ export async function DELETE(request: NextRequest) {
     return apiError("Availability id is required.");
   }
 
+  // Verify the availability slot belongs to this provider
+  if (profile.role === "provider") {
+    const providerQuery = await getProviderByUserId(supabase, user.id);
+    if (!providerQuery.data) {
+      return apiError("Provider profile missing.", 400);
+    }
+    const slotCheck = await supabase
+      .from("provider_availability")
+      .select("id, provider_id")
+      .eq("id", id)
+      .maybeSingle();
+    const slot = slotCheck.data as { id: string; provider_id: string } | null;
+    if (!slot || slot.provider_id !== providerQuery.data.id) {
+      return apiError("Forbidden.", 403);
+    }
+  }
+
   const { data, error } = await deleteProviderAvailability(supabase, id);
   if (error || !data) {
     return apiError(error?.message ?? "Unable to delete availability.", 400);

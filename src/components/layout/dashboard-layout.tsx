@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type PropsWithChildren, type ReactNode } from "react";
+import { useState, type PropsWithChildren, type ReactNode } from "react";
 
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
@@ -40,10 +40,6 @@ export function DashboardLayout({
     unreadCount,
     markAsRead
   } = useRealtimeNotifications(notifications, currentUserId);
-  const unreadNotifications = useMemo(
-    () => unreadCount,
-    [unreadCount]
-  );
   const navigation = dashboardNavigation[role];
 
   const actions = (
@@ -54,17 +50,20 @@ export function DashboardLayout({
   );
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(63,132,244,0.12),_transparent_24%),radial-gradient(circle_at_bottom_right,_rgba(15,23,42,0.08),_transparent_20%),linear-gradient(180deg,#fbfdff_0%,#f1f6fb_100%)]">
-      <div className="page-shell flex items-start gap-6 py-6 lg:py-8">
-        <Sidebar
-          items={navigation}
-          onOpenChange={setSidebarOpen}
-          open={sidebarOpen}
-          subtitle={sidebarSubtitle}
-          title={sidebarTitle}
-          userName={userName}
-        />
-        <div className="relative z-10 min-w-0 flex-1 space-y-4 sm:space-y-6">
+    <div className="flex min-h-screen bg-canvas">
+      {/* Fixed sidebar */}
+      <Sidebar
+        items={navigation}
+        onOpenChange={setSidebarOpen}
+        open={sidebarOpen}
+        subtitle={sidebarSubtitle}
+        title={sidebarTitle}
+        userName={userName}
+      />
+
+      {/* Main content area — fills remaining width */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="sticky top-0 z-20 border-b border-border bg-white/80 px-6 py-4 backdrop-blur-sm lg:px-8">
           <Header
             actions={actions}
             description={description}
@@ -72,25 +71,31 @@ export function DashboardLayout({
             title={title}
             userName={userName}
           />
-          <div className="grid gap-4 sm:gap-6 2xl:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="min-w-0">{children}</div>
-            <div className="hidden space-y-6 2xl:block">
-              <div className="sticky top-6">
-                <NotificationRail notifications={liveNotifications} onMarkAsRead={markAsRead} />
-              </div>
+        </div>
+
+        <div className="flex min-h-0 flex-1">
+          <main className="min-w-0 flex-1 px-6 py-6 lg:px-8">
+            {children}
+          </main>
+
+          {/* Notification rail — always visible on wide screens */}
+          <aside className="hidden w-[320px] shrink-0 border-l border-border bg-white/50 p-5 xl:block">
+            <div className="sticky top-24">
+              <NotificationRail notifications={liveNotifications} onMarkAsRead={markAsRead} />
             </div>
-          </div>
+          </aside>
         </div>
       </div>
 
+      {/* Mobile notification overlay */}
       {activityOpen ? (
-        <div className="fixed inset-0 z-40 bg-slate-950/30 px-4 pb-4 pt-24 2xl:hidden">
+        <div className="fixed inset-0 z-40 bg-slate-950/30 px-4 pb-4 pt-20 xl:hidden">
           <button aria-label="Close activity panel" className="absolute inset-0" onClick={() => setActivityOpen(false)} type="button" />
-          <div className="relative mx-auto flex h-full max-w-lg flex-col gap-3">
-            <div className="flex items-center justify-between rounded-pill border border-border bg-white px-4 py-3 shadow-soft">
+          <div className="relative mx-auto flex h-full max-w-md flex-col gap-3">
+            <div className="flex items-center justify-between rounded-xl border border-border bg-white px-4 py-3 shadow-elevated">
               <div>
-                <p className="text-sm font-semibold text-ink">Recent activity</p>
-                <p className="text-xs text-muted">{unreadNotifications} unread notifications</p>
+                <p className="text-sm font-semibold text-ink">Notifications</p>
+                <p className="text-xs text-muted">{unreadCount} unread</p>
               </div>
               <Button onClick={() => setActivityOpen(false)} size="sm" variant="ghost">
                 Close

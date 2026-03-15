@@ -1,8 +1,6 @@
 import { format } from "date-fns";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { listAppointments } from "@/repositories/appointmentRepository";
-import { listNotifications } from "@/repositories/notificationRepository";
 import { getPatientByUserId, getProviderByUserId } from "@/repositories/userRepository";
 import type { Appointment, Notification, Role } from "@/types/domain";
 import type { SupabaseTypedClient } from "@/repositories/base";
@@ -18,10 +16,12 @@ export async function ensureAppointmentReminderNotifications(
 ) {
   try {
     const admin = createSupabaseAdminClient();
-    const notificationsQuery = await listNotifications(client, userId);
-    const existingNotifications = (notificationsQuery.data ?? []) as Notification[];
 
-    let appointments: Appointment[] = [];
+    const now = new Date().toISOString();
+    const in24Hours = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+    // Fetch only upcoming appointments in the 24-hour window instead of all appointments
+    let appointmentQuery;
 
     if (role === "patient") {
       const patientQuery = await getPatientByUserId(client, userId);
@@ -29,35 +29,52 @@ export async function ensureAppointmentReminderNotifications(
         return;
       }
 
-      const appointmentsQuery = await listAppointments(client, { patientId: patientQuery.data.id });
-      appointments = (appointmentsQuery.data ?? []) as Appointment[];
-    }
-
-    if (role === "provider") {
+      appointmentQuery = await client
+        .from("appointments")
+        .select("id, patient_id, provider_id, scheduled_at, status, video_link, reason, created_at")
+        .eq("patient_id", patientQuery.data.id)
+        .gte("scheduled_at", now)
+        .lte("scheduled_at", in24Hours)
+        .in("status", ["pending", "confirmed"])
+        .limit(10);
+    } else {
       const providerQuery = await getProviderByUserId(client, userId);
       if (!providerQuery.data) {
         return;
       }
 
-      const appointmentsQuery = await listAppointments(client, { providerId: providerQuery.data.id });
-      appointments = (appointmentsQuery.data ?? []) as Appointment[];
+      appointmentQuery = await client
+        .from("appointments")
+        .select("id, patient_id, provider_id, scheduled_at, status, video_link, reason, created_at")
+        .eq("provider_id", providerQuery.data.id)
+        .gte("scheduled_at", now)
+        .lte("scheduled_at", in24Hours)
+        .in("status", ["pending", "confirmed"])
+        .limit(10);
     }
 
-    const now = Date.now();
-    const in24Hours = now + 24 * 60 * 60 * 1000;
-    const upcomingAppointments = appointments.filter((appointment) => {
-      if (appointment.status === "cancelled" || appointment.status === "completed") {
-        return false;
-      }
+    const upcomingAppointments = (appointmentQuery.data ?? []) as Appointment[];
 
-      const scheduledAt = new Date(appointment.scheduled_at).getTime();
-      return scheduledAt >= now && scheduledAt <= in24Hours;
-    });
+    if (upcomingAppointments.length === 0) {
+      return;
+    }
+
+    // Only fetch recent appointment-type notifications to check for duplicates
+    const notificationsQuery = await client
+      .from("notifications")
+      .select("id, type, title, body")
+      .eq("user_id", userId)
+      .eq("type", "appointment")
+      .eq("title", "Appointment reminder")
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    const existingNotifications = (notificationsQuery.data ?? []) as Pick<Notification, "id" | "type" | "title" | "body">[];
 
     for (const appointment of upcomingAppointments) {
       const body = buildReminderBody(appointment);
       const exists = existingNotifications.some(
-        (notification) => notification.type === "appointment" && notification.title === "Appointment reminder" && notification.body === body
+        (notification) => notification.body === body
       );
 
       if (exists) {

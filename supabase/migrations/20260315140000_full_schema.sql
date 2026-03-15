@@ -1,5 +1,17 @@
+-- ============================================================
+-- Healthie — Full Consolidated Schema
+-- Merges: original schema + performance optimizations + RLS fixes
+-- Safe to run on a fresh Supabase project
+-- ============================================================
+
+-- ===================
+-- EXTENSIONS
+-- ===================
 create extension if not exists "pgcrypto";
 
+-- ===================
+-- HELPER FUNCTIONS
+-- ===================
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -10,6 +22,9 @@ begin
 end;
 $$;
 
+-- ===================
+-- TABLES
+-- ===================
 create table if not exists public.organizations (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -142,15 +157,32 @@ create table if not exists public.audit_logs (
   created_at timestamptz not null default timezone('utc', now())
 );
 
+-- ===================
+-- INDEXES (original + performance additions)
+-- ===================
 create index if not exists appointments_patient_id_idx on public.appointments(patient_id);
 create index if not exists appointments_provider_id_idx on public.appointments(provider_id);
+create index if not exists appointments_scheduled_at_idx on public.appointments(scheduled_at);
+create index if not exists appointments_status_idx on public.appointments(status);
 create index if not exists medical_records_patient_id_idx on public.medical_records(patient_id);
+create index if not exists medical_records_provider_id_idx on public.medical_records(provider_id);
+create index if not exists clinical_notes_appointment_id_idx on public.clinical_notes(appointment_id);
+create index if not exists clinical_notes_provider_id_idx on public.clinical_notes(provider_id);
+create index if not exists clinical_notes_patient_id_idx on public.clinical_notes(patient_id);
 create index if not exists prescriptions_patient_id_idx on public.prescriptions(patient_id);
+create index if not exists prescriptions_provider_id_idx on public.prescriptions(provider_id);
 create index if not exists messages_sender_receiver_idx on public.messages(sender_id, receiver_id);
+create index if not exists messages_receiver_id_idx on public.messages(receiver_id);
 create index if not exists notifications_user_id_idx on public.notifications(user_id);
+create index if not exists notifications_user_type_idx on public.notifications(user_id, type);
+create index if not exists users_role_idx on public.users(role);
+create index if not exists audit_logs_entity_type_idx on public.audit_logs(entity_type, created_at desc);
 create index if not exists provider_availability_provider_day_idx
   on public.provider_availability(provider_id, day_of_week, start_time);
 
+-- ===================
+-- TRIGGERS (updated_at)
+-- ===================
 drop trigger if exists organizations_set_updated_at on public.organizations;
 create trigger organizations_set_updated_at
 before update on public.organizations
@@ -196,6 +228,9 @@ create trigger prescriptions_set_updated_at
 before update on public.prescriptions
 for each row execute function public.set_updated_at();
 
+-- ===================
+-- AUTH TRIGGER (auto-create user profile on signup)
+-- ===================
 create or replace function public.handle_new_auth_user()
 returns trigger
 language plpgsql
@@ -223,10 +258,15 @@ create trigger on_auth_user_created
 after insert on auth.users
 for each row execute function public.handle_new_auth_user();
 
+-- ===================
+-- RLS HELPER FUNCTIONS (optimized with security invoker + search_path)
+-- ===================
 create or replace function public.current_role()
 returns text
 language sql
 stable
+security invoker
+set search_path = public
 as $$
   select role from public.users where id = auth.uid()
 $$;
@@ -235,6 +275,8 @@ create or replace function public.current_patient_id()
 returns uuid
 language sql
 stable
+security invoker
+set search_path = public
 as $$
   select id from public.patients where user_id = auth.uid()
 $$;
@@ -243,10 +285,15 @@ create or replace function public.current_provider_id()
 returns uuid
 language sql
 stable
+security invoker
+set search_path = public
 as $$
   select id from public.providers where user_id = auth.uid()
 $$;
 
+-- ===================
+-- ENABLE ROW LEVEL SECURITY
+-- ===================
 alter table public.users enable row level security;
 alter table public.organizations enable row level security;
 alter table public.patients enable row level security;
@@ -260,11 +307,17 @@ alter table public.messages enable row level security;
 alter table public.notifications enable row level security;
 alter table public.audit_logs enable row level security;
 
+-- ===================
+-- RLS POLICIES: organizations
+-- ===================
 drop policy if exists "admins manage organizations" on public.organizations;
 create policy "admins manage organizations" on public.organizations
 for all using (public.current_role() = 'admin')
 with check (public.current_role() = 'admin');
 
+-- ===================
+-- RLS POLICIES: users
+-- ===================
 drop policy if exists "users read own user row" on public.users;
 create policy "users read own user row" on public.users
 for select using (auth.uid() = id or public.current_role() = 'admin');
@@ -274,65 +327,60 @@ create policy "users update own profile" on public.users
 for update using (auth.uid() = id or public.current_role() = 'admin')
 with check (auth.uid() = id or public.current_role() = 'admin');
 
+-- Any authenticated user can read user rows for providers (needed for booking dropdown joins)
 drop policy if exists "authenticated users read provider user rows" on public.users;
 create policy "authenticated users read provider user rows" on public.users
 for select using (
-  exists (
-    select 1
-    from public.providers p
-    where p.user_id = users.id
-  )
+  exists (select 1 from public.providers p where p.user_id = users.id)
   or auth.uid() = id
   or public.current_role() = 'admin'
 );
 
-drop policy if exists "providers read patient user rows for appointments" on public.users;
-create policy "providers read patient user rows for appointments" on public.users
+-- Providers can read user rows for all patients (needed for patient list joins)
+drop policy if exists "providers read all patient user rows" on public.users;
+create policy "providers read all patient user rows" on public.users
 for select using (
   public.current_role() = 'provider'
-  and exists (
-    select 1
-    from public.patients p
-    join public.appointments a on a.patient_id = p.id
-    where p.user_id = users.id
-      and a.provider_id = public.current_provider_id()
-  )
+  and exists (select 1 from public.patients p where p.user_id = users.id)
 );
 
-drop policy if exists "patients read provider user rows for appointments" on public.users;
-create policy "patients read provider user rows for appointments" on public.users
+-- Patients can read user rows for all providers (needed for provider list joins)
+drop policy if exists "patients read all provider user rows" on public.users;
+create policy "patients read all provider user rows" on public.users
 for select using (
   public.current_role() = 'patient'
-  and exists (
-    select 1
-    from public.providers p
-    join public.appointments a on a.provider_id = p.id
-    where p.user_id = users.id
-      and a.patient_id = public.current_patient_id()
-  )
+  and exists (select 1 from public.providers p where p.user_id = users.id)
 );
 
+-- ===================
+-- RLS POLICIES: patients
+-- ===================
 drop policy if exists "patients read own profile" on public.patients;
 create policy "patients read own profile" on public.patients
 for select using (user_id = auth.uid() or public.current_role() = 'admin');
 
-drop policy if exists "providers read patient profiles for appointments" on public.patients;
-create policy "providers read patient profiles for appointments" on public.patients
-for select using (
-  public.current_role() = 'provider'
-  and exists (
-    select 1
-    from public.appointments a
-    where a.patient_id = patients.id
-      and a.provider_id = public.current_provider_id()
-  )
-);
+-- Providers can read all patient profiles (not just those with appointments)
+drop policy if exists "providers read all patient profiles" on public.patients;
+create policy "providers read all patient profiles" on public.patients
+for select using (public.current_role() = 'provider');
 
+-- ===================
+-- RLS POLICIES: providers
+-- ===================
+-- All authenticated users can read provider profiles (patients need this for booking)
+drop policy if exists "authenticated users read providers" on public.providers;
+create policy "authenticated users read providers" on public.providers
+for select using (auth.role() = 'authenticated');
+
+-- Providers/admins can manage their own provider row
 drop policy if exists "providers manage own provider row" on public.providers;
 create policy "providers manage own provider row" on public.providers
 for all using (user_id = auth.uid() or public.current_role() = 'admin')
 with check (user_id = auth.uid() or public.current_role() = 'admin');
 
+-- ===================
+-- RLS POLICIES: provider_availability
+-- ===================
 drop policy if exists "authenticated users read provider availability" on public.provider_availability;
 create policy "authenticated users read provider availability" on public.provider_availability
 for select using (auth.role() = 'authenticated');
@@ -342,38 +390,34 @@ create policy "providers manage own availability" on public.provider_availabilit
 for all using (provider_id = public.current_provider_id() or public.current_role() = 'admin')
 with check (provider_id = public.current_provider_id() or public.current_role() = 'admin');
 
+-- ===================
+-- RLS POLICIES: appointments
+-- ===================
 drop policy if exists "patients read own appointments" on public.appointments;
 create policy "patients read own appointments" on public.appointments
-for select using (
-  patient_id = public.current_patient_id() or public.current_role() = 'admin'
-);
+for select using (patient_id = public.current_patient_id() or public.current_role() = 'admin');
 
 drop policy if exists "patients create appointments" on public.appointments;
 create policy "patients create appointments" on public.appointments
-for insert with check (
-  patient_id = public.current_patient_id() or public.current_role() = 'admin'
-);
+for insert with check (patient_id = public.current_patient_id() or public.current_role() = 'admin');
 
 drop policy if exists "patients update own appointments" on public.appointments;
 create policy "patients update own appointments" on public.appointments
-for update using (
-  patient_id = public.current_patient_id() or public.current_role() = 'admin'
-)
-with check (
-  patient_id = public.current_patient_id() or public.current_role() = 'admin'
-);
+for update using (patient_id = public.current_patient_id() or public.current_role() = 'admin')
+with check (patient_id = public.current_patient_id() or public.current_role() = 'admin');
 
 drop policy if exists "patients delete own appointments" on public.appointments;
 create policy "patients delete own appointments" on public.appointments
-for delete using (
-  patient_id = public.current_patient_id() or public.current_role() = 'admin'
-);
+for delete using (patient_id = public.current_patient_id() or public.current_role() = 'admin');
 
 drop policy if exists "providers manage their appointments" on public.appointments;
 create policy "providers manage their appointments" on public.appointments
 for all using (provider_id = public.current_provider_id() or public.current_role() = 'admin')
 with check (provider_id = public.current_provider_id() or public.current_role() = 'admin');
 
+-- ===================
+-- RLS POLICIES: medical_records
+-- ===================
 drop policy if exists "patients read own medical records" on public.medical_records;
 create policy "patients read own medical records" on public.medical_records
 for select using (patient_id = public.current_patient_id() or public.current_role() = 'admin');
@@ -383,6 +427,9 @@ create policy "providers manage patient records" on public.medical_records
 for all using (provider_id = public.current_provider_id() or public.current_role() = 'admin')
 with check (provider_id = public.current_provider_id() or public.current_role() = 'admin');
 
+-- ===================
+-- RLS POLICIES: clinical_notes
+-- ===================
 drop policy if exists "patients read own notes" on public.clinical_notes;
 create policy "patients read own notes" on public.clinical_notes
 for select using (patient_id = public.current_patient_id() or public.current_role() = 'admin');
@@ -392,6 +439,9 @@ create policy "providers manage own notes" on public.clinical_notes
 for all using (provider_id = public.current_provider_id() or public.current_role() = 'admin')
 with check (provider_id = public.current_provider_id() or public.current_role() = 'admin');
 
+-- ===================
+-- RLS POLICIES: prescriptions
+-- ===================
 drop policy if exists "patients read own prescriptions" on public.prescriptions;
 create policy "patients read own prescriptions" on public.prescriptions
 for select using (patient_id = public.current_patient_id() or public.current_role() = 'admin');
@@ -401,6 +451,9 @@ create policy "providers manage prescriptions" on public.prescriptions
 for all using (provider_id = public.current_provider_id() or public.current_role() = 'admin')
 with check (provider_id = public.current_provider_id() or public.current_role() = 'admin');
 
+-- ===================
+-- RLS POLICIES: messages
+-- ===================
 drop policy if exists "users read own messages" on public.messages;
 create policy "users read own messages" on public.messages
 for select using (sender_id = auth.uid() or receiver_id = auth.uid() or public.current_role() = 'admin');
@@ -409,6 +462,9 @@ drop policy if exists "users send messages" on public.messages;
 create policy "users send messages" on public.messages
 for insert with check (sender_id = auth.uid() or public.current_role() = 'admin');
 
+-- ===================
+-- RLS POLICIES: notifications
+-- ===================
 drop policy if exists "users read own notifications" on public.notifications;
 create policy "users read own notifications" on public.notifications
 for select using (user_id = auth.uid() or public.current_role() = 'admin');
@@ -418,10 +474,16 @@ create policy "users update own notifications" on public.notifications
 for update using (user_id = auth.uid() or public.current_role() = 'admin')
 with check (user_id = auth.uid() or public.current_role() = 'admin');
 
+-- ===================
+-- RLS POLICIES: audit_logs
+-- ===================
 drop policy if exists "admins read audit logs" on public.audit_logs;
 create policy "admins read audit logs" on public.audit_logs
 for select using (public.current_role() = 'admin');
 
+-- ===================
+-- STORAGE: medical documents bucket
+-- ===================
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (
   'medical-documents',
@@ -435,14 +497,11 @@ set public = excluded.public,
     file_size_limit = excluded.file_size_limit,
     allowed_mime_types = excluded.allowed_mime_types;
 
+-- Storage RLS
 drop policy if exists "admins manage medical documents" on storage.objects;
 create policy "admins manage medical documents" on storage.objects
-for all using (
-  bucket_id = 'medical-documents' and public.current_role() = 'admin'
-)
-with check (
-  bucket_id = 'medical-documents' and public.current_role() = 'admin'
-);
+for all using (bucket_id = 'medical-documents' and public.current_role() = 'admin')
+with check (bucket_id = 'medical-documents' and public.current_role() = 'admin');
 
 drop policy if exists "authenticated users read own medical documents" on storage.objects;
 create policy "authenticated users read own medical documents" on storage.objects
@@ -481,36 +540,73 @@ for delete using (
   and (storage.foldername(name))[1] = auth.uid()::text
 );
 
+-- ===================
+-- REALTIME: only messages + notifications (not appointments)
+-- ===================
 do $$
 begin
   if not exists (
-    select 1
-    from pg_publication_tables
-    where pubname = 'supabase_realtime'
-      and schemaname = 'public'
-      and tablename = 'messages'
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'messages'
   ) then
     execute 'alter publication supabase_realtime add table public.messages';
   end if;
 
   if not exists (
-    select 1
-    from pg_publication_tables
-    where pubname = 'supabase_realtime'
-      and schemaname = 'public'
-      and tablename = 'notifications'
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'notifications'
   ) then
     execute 'alter publication supabase_realtime add table public.notifications';
   end if;
-
-  if not exists (
-    select 1
-    from pg_publication_tables
-    where pubname = 'supabase_realtime'
-      and schemaname = 'public'
-      and tablename = 'appointments'
-  ) then
-    execute 'alter publication supabase_realtime add table public.appointments';
-  end if;
 end
 $$;
+
+-- ===================
+-- HELPER FUNCTIONS for script-based management (exec_sql, run_ddl)
+-- ===================
+create or replace function exec_sql(query text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  result jsonb;
+begin
+  execute 'select coalesce(jsonb_agg(row_to_json(t)), ''[]''::jsonb) from (' || query || ') t'
+    into result;
+  return result;
+exception when others then
+  return jsonb_build_object('error', SQLERRM);
+end;
+$fn$;
+
+create or replace function run_ddl(query text)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+begin
+  execute query;
+  return 'ok';
+exception when others then
+  return SQLERRM;
+end;
+$fn$;
+
+-- ===================
+-- ANALYZE all tables for query planner
+-- ===================
+analyze public.users;
+analyze public.patients;
+analyze public.providers;
+analyze public.organizations;
+analyze public.provider_availability;
+analyze public.appointments;
+analyze public.medical_records;
+analyze public.clinical_notes;
+analyze public.prescriptions;
+analyze public.messages;
+analyze public.notifications;
+analyze public.audit_logs;

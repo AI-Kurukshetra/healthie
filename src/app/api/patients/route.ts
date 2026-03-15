@@ -10,9 +10,13 @@ import { adminPatientCreateSchema, adminPatientUpdateSchema } from "@/validators
 import { patientProfileSchema } from "@/validators/profile";
 
 export async function GET() {
-  const { supabase, user } = await requireApiUser();
-  if (!user) {
+  const { supabase, user, profile } = await requireApiUser();
+  if (!user || !profile) {
     return apiError("Unauthorized.", 401);
+  }
+
+  if (profile.role === "patient") {
+    return apiError("Forbidden.", 403);
   }
 
   const { data, error } = await listPatients(supabase);

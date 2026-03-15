@@ -10,11 +10,12 @@ import { adminProviderCreateSchema, adminProviderUpdateSchema } from "@/validato
 import { providerProfileSchema } from "@/validators/profile";
 
 export async function GET() {
-  const { supabase, user } = await requireApiUser();
-  if (!user) {
+  const { supabase, user, profile } = await requireApiUser();
+  if (!user || !profile) {
     return apiError("Unauthorized.", 401);
   }
 
+  // All authenticated roles can list providers (patients need it for booking)
   const { data, error } = await listProviders(supabase);
 
   if (error) {

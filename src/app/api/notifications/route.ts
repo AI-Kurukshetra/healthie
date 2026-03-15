@@ -32,6 +32,22 @@ export async function PATCH(request: NextRequest) {
     return apiError("Notification id is required.");
   }
 
+  // Verify the notification belongs to the requesting user
+  const ownerCheck = await supabase
+    .from("notifications")
+    .select("id, user_id")
+    .eq("id", body.id)
+    .maybeSingle();
+
+  const notification = ownerCheck.data as { id: string; user_id: string } | null;
+  if (!notification) {
+    return apiError("Notification not found.", 404);
+  }
+
+  if (notification.user_id !== user.id) {
+    return apiError("Forbidden.", 403);
+  }
+
   const { data, error } = await markNotificationRead(supabase, body.id);
   if (error) {
     return apiError(error.message, 400);

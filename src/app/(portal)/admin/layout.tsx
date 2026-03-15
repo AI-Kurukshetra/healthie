@@ -1,4 +1,4 @@
-import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireRole } from "@/lib/auth";
 import { listNotifications } from "@/repositories/notificationRepository";
 import { AdminDashboardLayout } from "@/components/layout/admin-dashboard-layout";
@@ -12,7 +12,7 @@ export default async function AdminLayout({
   children: React.ReactNode;
 }) {
   const { profile, user } = await requireRole("admin");
-  const supabase = createSupabaseServerComponentClient();
+  const supabase = createSupabaseAdminClient() as any;
   const notificationsQuery = await listNotifications(supabase, user.id);
   const notifications = (notificationsQuery.data ?? []) as Notification[];
 
