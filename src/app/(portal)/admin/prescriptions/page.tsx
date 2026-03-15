@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 
-import { AdminPrescriptionManager } from "@/components/admin/admin-prescription-manager";
+import { AdminPrescriptionDirectory } from "@/components/admin/admin-prescription-directory";
 import { requireRole } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { listPrescriptions } from "@/repositories/prescriptionRepository";
@@ -20,5 +20,5 @@ export default async function AdminPrescriptionsPage() {
   const patients = (patientsQuery.data ?? []) as Patient[];
   const providers = (providersQuery.data ?? []) as Provider[];
 
-  return <AdminPrescriptionManager patients={patients as any} prescriptions={prescriptions} providers={providers as any} />;
+  return <AdminPrescriptionDirectory patients={patients as any} prescriptions={prescriptions} providers={providers as any} />;
 }

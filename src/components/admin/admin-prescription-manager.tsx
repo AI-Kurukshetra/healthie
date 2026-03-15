@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { Pill, Plus, SquarePen, Trash2, X } from "lucide-react";
+import { Pill, Plus, Search, SquarePen, Stethoscope, Trash2, Users, X } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/shared/empty-state";
+import { useToast } from "@/components/ui/toast";
 import type { Patient, Prescription, Provider } from "@/types/domain";
 
 export function AdminPrescriptionManager({
@@ -25,15 +26,30 @@ export function AdminPrescriptionManager({
   providers: Provider[];
 }) {
   const router = useRouter();
+  const { success: toastSuccess, error: toastError } = useToast();
   const formRef = useRef<HTMLFormElement>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingRx, setEditingRx] = useState<Prescription | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
-  const patientMap = new Map(patients.map((p) => [p.id, p.user?.full_name ?? p.user?.email ?? "Patient"]));
-  const providerMap = new Map(providers.map((p) => [p.id, p.user?.full_name ?? p.user?.email ?? "Provider"]));
+  const patientMap = useMemo(() => new Map(patients.map((p) => [p.id, p.user?.full_name ?? p.user?.email ?? "Patient"])), [patients]);
+  const providerMap = useMemo(() => new Map(providers.map((p) => [p.id, p.user?.full_name ?? p.user?.email ?? "Provider"])), [providers]);
+
+  const filtered = useMemo(() => {
+    if (!query.trim()) return prescriptions;
+    const q = query.toLowerCase();
+    return prescriptions.filter((rx) => {
+      const patient = (patientMap.get(rx.patient_id) ?? "").toLowerCase();
+      const provider = (providerMap.get(rx.provider_id) ?? "").toLowerCase();
+      const medication = (rx.medication_name ?? "").toLowerCase();
+      const dosage = (rx.dosage ?? "").toLowerCase();
+      const duration = (rx.duration ?? "").toLowerCase();
+      return patient.includes(q) || provider.includes(q) || medication.includes(q) || dosage.includes(q) || duration.includes(q);
+    });
+  }, [prescriptions, query, patientMap, providerMap]);
 
   async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -41,30 +57,40 @@ export function AdminPrescriptionManager({
     setError(null);
     const fd = new FormData(event.currentTarget);
 
-    const response = await fetch("/api/prescriptions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        patient_id: String(fd.get("patient_id") ?? ""),
-        provider_id: String(fd.get("provider_id") ?? ""),
-        medication_name: String(fd.get("medication_name") ?? ""),
-        dosage: String(fd.get("dosage") ?? ""),
-        instructions: String(fd.get("instructions") ?? ""),
-        duration: String(fd.get("duration") ?? "")
-      })
-    });
+    try {
+      const response = await fetch("/api/prescriptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patient_id: String(fd.get("patient_id") ?? ""),
+          provider_id: String(fd.get("provider_id") ?? ""),
+          medication_name: String(fd.get("medication_name") ?? "").trim(),
+          dosage: String(fd.get("dosage") ?? "").trim(),
+          instructions: String(fd.get("instructions") ?? "").trim(),
+          duration: String(fd.get("duration") ?? "").trim()
+        })
+      });
 
-    const payload = await response.json();
-    setLoading(false);
-    if (!response.ok) {
-      setError(payload.error ?? "Unable to create prescription.");
-      return;
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to create prescription.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
+
+      toastSuccess("Prescription created.");
+      formRef.current?.reset();
+      setShowForm(false);
+      setError(null);
+      router.refresh();
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
+      setLoading(false);
     }
-
-    formRef.current?.reset();
-    setShowForm(false);
-    setError(null);
-    router.refresh();
   }
 
   async function handleUpdate(event: React.FormEvent<HTMLFormElement>) {
@@ -74,43 +100,61 @@ export function AdminPrescriptionManager({
     setError(null);
     const fd = new FormData(event.currentTarget);
 
-    const response = await fetch("/api/prescriptions", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: editingRx.id,
-        patient_id: String(fd.get("patient_id") ?? ""),
-        provider_id: String(fd.get("provider_id") ?? ""),
-        medication_name: String(fd.get("medication_name") ?? ""),
-        dosage: String(fd.get("dosage") ?? ""),
-        instructions: String(fd.get("instructions") ?? ""),
-        duration: String(fd.get("duration") ?? "")
-      })
-    });
+    try {
+      const response = await fetch("/api/prescriptions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editingRx.id,
+          patient_id: String(fd.get("patient_id") ?? ""),
+          provider_id: String(fd.get("provider_id") ?? ""),
+          medication_name: String(fd.get("medication_name") ?? "").trim(),
+          dosage: String(fd.get("dosage") ?? "").trim(),
+          instructions: String(fd.get("instructions") ?? "").trim(),
+          duration: String(fd.get("duration") ?? "").trim()
+        })
+      });
 
-    setBusyId(null);
-    if (!response.ok) {
-      const payload = await response.json();
-      setError(payload.error ?? "Unable to update prescription.");
-      return;
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to update prescription.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
+
+      toastSuccess("Prescription updated.");
+      setEditingRx(null);
+      setError(null);
+      router.refresh();
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
+      setBusyId(null);
     }
-
-    setEditingRx(null);
-    setError(null);
-    router.refresh();
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this prescription? This cannot be undone.")) return;
+    if (!window.confirm("Delete this prescription? This cannot be undone.")) return;
     setBusyId(id);
-    await fetch("/api/prescriptions", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id })
-    });
-    setBusyId(null);
-    if (editingRx?.id === id) setEditingRx(null);
-    router.refresh();
+
+    try {
+      const res = await fetch("/api/prescriptions", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id })
+      });
+      if (res.ok) toastSuccess("Prescription deleted.");
+      else toastError("Unable to delete prescription.");
+      if (editingRx?.id === id) setEditingRx(null);
+      router.refresh();
+    } catch {
+      toastError("Network error. Please check your connection and try again.");
+    } finally {
+      setBusyId(null);
+    }
   }
 
   function openEdit(rx: Prescription) {
@@ -143,15 +187,24 @@ export function AdminPrescriptionManager({
 
         <div className="mt-6 grid gap-4 sm:grid-cols-3">
           <div className="rounded-[22px] border border-border/80 bg-white/85 p-4 shadow-soft">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Total prescriptions</p>
+            <div className="flex items-center gap-2">
+              <Pill className="h-4 w-4 text-primary-deep" />
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Total prescriptions</p>
+            </div>
             <p className="mt-2 text-3xl font-semibold text-ink">{prescriptions.length}</p>
           </div>
           <div className="rounded-[22px] border border-border/80 bg-white/85 p-4 shadow-soft">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Patients receiving</p>
+            <div className="flex items-center gap-2">
+              <Users className="h-4 w-4 text-primary-deep" />
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Patients receiving</p>
+            </div>
             <p className="mt-2 text-3xl font-semibold text-ink">{new Set(prescriptions.map((r) => r.patient_id)).size}</p>
           </div>
           <div className="rounded-[22px] border border-border/80 bg-white/85 p-4 shadow-soft">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Providers prescribing</p>
+            <div className="flex items-center gap-2">
+              <Stethoscope className="h-4 w-4 text-primary-deep" />
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Providers prescribing</p>
+            </div>
             <p className="mt-2 text-3xl font-semibold text-ink">{new Set(prescriptions.map((r) => r.provider_id)).size}</p>
           </div>
         </div>
@@ -278,17 +331,30 @@ export function AdminPrescriptionManager({
 
       {/* Data Table */}
       <Card className="overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-5">
-          <div>
-            <h3 className="text-lg font-semibold text-ink">Prescription roster</h3>
-            <p className="mt-1 text-sm text-muted">A data grid for reviewing medications, dosage, and managing prescriptions.</p>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4">
+          <div className="relative w-full max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+            <Input
+              className="pl-9"
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by patient, provider, medication, dosage..."
+              type="search"
+              value={query}
+            />
           </div>
-          <Badge>{prescriptions.length} rows</Badge>
+          <div className="flex items-center gap-3">
+            <Badge>{filtered.length} of {prescriptions.length}</Badge>
+          </div>
         </div>
 
-        {prescriptions.length === 0 ? (
+        {filtered.length === 0 && query.trim() === "" ? (
           <div className="p-6">
             <EmptyState description="No prescriptions yet. Click 'Add prescription' above to issue the first one." title="No prescriptions found" />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="px-6 py-12 text-center">
+            <p className="text-sm font-medium text-ink">No prescriptions match &ldquo;{query}&rdquo;</p>
+            <p className="mt-1 text-xs text-muted">Try a different search term or clear the filter.</p>
           </div>
         ) : (
           <>
@@ -297,18 +363,18 @@ export function AdminPrescriptionManager({
               <table className="min-w-full divide-y divide-border text-left text-sm">
                 <thead className="bg-surface-muted text-muted">
                   <tr>
-                    <th className="px-6 py-4 font-semibold">Patient</th>
-                    <th className="px-6 py-4 font-semibold">Provider</th>
-                    <th className="px-6 py-4 font-semibold">Medication</th>
-                    <th className="px-6 py-4 font-semibold">Dosage</th>
-                    <th className="px-6 py-4 font-semibold">Duration</th>
-                    <th className="px-6 py-4 font-semibold">Created</th>
-                    <th className="px-6 py-4 text-right font-semibold">Actions</th>
+                    <th className="px-6 py-3.5 font-semibold">Patient</th>
+                    <th className="px-6 py-3.5 font-semibold">Provider</th>
+                    <th className="px-6 py-3.5 font-semibold">Medication</th>
+                    <th className="px-6 py-3.5 font-semibold">Dosage</th>
+                    <th className="px-6 py-3.5 font-semibold">Duration</th>
+                    <th className="px-6 py-3.5 font-semibold">Created</th>
+                    <th className="px-6 py-3.5 text-right font-semibold">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border bg-white">
-                  {prescriptions.map((rx) => (
-                    <tr key={rx.id} className={`align-middle ${editingRx?.id === rx.id ? "bg-primary-soft/30" : ""}`}>
+                  {filtered.map((rx) => (
+                    <tr key={rx.id} className={`align-middle transition-colors hover:bg-surface-muted/50 ${editingRx?.id === rx.id ? "bg-primary-soft/30" : ""}`}>
                       <td className="px-6 py-4">
                         <div className="flex min-w-[160px] items-center gap-3">
                           <Avatar className="h-9 w-9 shrink-0" name={patientMap.get(rx.patient_id)} />
@@ -338,8 +404,8 @@ export function AdminPrescriptionManager({
 
             {/* Mobile cards */}
             <div className="space-y-3 p-4 lg:hidden">
-              {prescriptions.map((rx) => (
-                <div key={rx.id} className={`rounded-[22px] border p-4 ${editingRx?.id === rx.id ? "border-primary/30 bg-primary-soft/20" : "border-border/80 bg-surface-muted"}`}>
+              {filtered.map((rx) => (
+                <div key={rx.id} className={`rounded-[22px] border p-4 ${editingRx?.id === rx.id ? "border-primary/30 bg-primary-soft/20" : "border-border/80 bg-white shadow-soft transition-shadow hover:shadow-card"}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="font-semibold text-ink">{rx.medication_name}</p>

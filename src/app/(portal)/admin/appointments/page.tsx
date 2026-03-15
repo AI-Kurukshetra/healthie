@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 
-import { AdminAppointmentManager } from "@/components/admin/admin-appointment-manager";
+import { AdminAppointmentDirectory } from "@/components/admin/admin-appointment-directory";
 import { requireRole } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { listAppointments } from "@/repositories/appointmentRepository";
@@ -14,12 +14,12 @@ export default async function AdminAppointmentsPage() {
   const [appointmentsQuery, patientsQuery, providersQuery] = await Promise.all([
     listAppointments(supabase),
     listPatients(supabase),
-    listProviders(supabase)
+    listProviders(supabase),
   ]);
 
   const appointments = (appointmentsQuery.data ?? []) as Appointment[];
   const patients = (patientsQuery.data ?? []) as Patient[];
   const providers = (providersQuery.data ?? []) as Provider[];
 
-  return <AdminAppointmentManager appointments={appointments} patients={patients as any} providers={providers as any} />;
+  return <AdminAppointmentDirectory appointments={appointments} patients={patients} providers={providers} />;
 }

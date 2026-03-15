@@ -1,11 +1,16 @@
 import { NextRequest } from "next/server";
 
+import { createAuditLog, fireAndForget } from "@/app/api/_utils/helpers";
 import { apiError, apiSuccess } from "@/lib/api";
 import { hasSupabaseEnv } from "@/lib/env";
+import { authLimiter, getClientKey, rateLimitResponse } from "@/lib/rate-limit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { signupSchema } from "@/validators/auth";
 
 export async function POST(request: NextRequest) {
+  const rl = authLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   if (!hasSupabaseEnv) {
     return apiError("Supabase environment variables are not configured.", 500);
   }
@@ -33,6 +38,7 @@ export async function POST(request: NextRequest) {
 
   const userId = data.user.id;
 
+  // Upsert user row first (role table depends on it via FK)
   const userUpsert = await (supabase.from("users") as any).upsert(
     {
       id: userId,
@@ -50,29 +56,22 @@ export async function POST(request: NextRequest) {
     return apiError(userUpsert.error.message, 400);
   }
 
-  if (parsed.data.role === "patient") {
-    const patientUpsert = await (supabase.from("patients") as any).upsert(
-      { user_id: userId },
-      { onConflict: "user_id" }
-    );
+  // Role-specific upsert (only one runs)
+  const roleUpsert =
+    parsed.data.role === "patient"
+      ? await (supabase.from("patients") as any).upsert({ user_id: userId }, { onConflict: "user_id" })
+      : parsed.data.role === "provider"
+        ? await (supabase.from("providers") as any).upsert({ user_id: userId, organization_id: null }, { onConflict: "user_id" })
+        : null;
 
-    if (patientUpsert.error) {
-      await supabase.auth.admin.deleteUser(userId);
-      return apiError(patientUpsert.error.message, 400);
-    }
+  if (roleUpsert?.error) {
+    await supabase.auth.admin.deleteUser(userId);
+    return apiError(roleUpsert.error.message, 400);
   }
 
-  if (parsed.data.role === "provider") {
-    const providerUpsert = await (supabase.from("providers") as any).upsert(
-      { user_id: userId, organization_id: null },
-      { onConflict: "user_id" }
-    );
-
-    if (providerUpsert.error) {
-      await supabase.auth.admin.deleteUser(userId);
-      return apiError(providerUpsert.error.message, 400);
-    }
-  }
+  fireAndForget(
+    createAuditLog("user.signup", "users", userId, { email: parsed.data.email, role: parsed.data.role }, userId)
+  );
 
   return apiSuccess({ user: userId, role: parsed.data.role }, { status: 201 });
 }

@@ -5,12 +5,19 @@ export const patientProfileSchema = z.object({
   date_of_birth: z.string().trim().optional().nullable(),
   phone: z.string().trim().max(40).optional().nullable(),
   emergency_contact: z.string().trim().max(120).optional().nullable(),
-  insurance_provider: z.string().trim().max(120).optional().nullable()
+  insurance_provider: z.string().trim().max(120).optional().nullable(),
+  avatar_url: z.union([z.string().trim().url("Must be a valid URL.").max(500), z.literal("")]).optional().nullable()
 });
 
 export const providerProfileSchema = z.object({
   full_name: z.string().trim().min(1).max(120),
   specialty: z.string().trim().max(120).optional().nullable(),
   license_number: z.string().trim().max(120).optional().nullable(),
-  bio: z.string().trim().max(2000).optional().nullable()
+  bio: z.string().trim().max(2000).optional().nullable(),
+  avatar_url: z.union([z.string().trim().url("Must be a valid URL.").max(500), z.literal("")]).optional().nullable()
+});
+
+export const adminProfileSchema = z.object({
+  full_name: z.string().trim().min(1, "Full name is required.").max(120),
+  avatar_url: z.union([z.string().trim().url("Must be a valid URL.").max(500), z.literal("")]).optional().nullable()
 });

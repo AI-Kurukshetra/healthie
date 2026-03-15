@@ -2,14 +2,18 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
 
-import { requireApiUser } from "@/app/api/_utils/helpers";
+import { createAuditLog, fireAndForget, requireApiUser } from "@/app/api/_utils/helpers";
 import { apiError, apiSuccess } from "@/lib/api";
+import { apiLimiter, getClientKey, rateLimitResponse, writeLimiter } from "@/lib/rate-limit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { listPatients } from "@/repositories/userRepository";
 import { adminPatientCreateSchema, adminPatientUpdateSchema } from "@/validators/admin";
 import { patientProfileSchema } from "@/validators/profile";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const rl = apiLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user, profile } = await requireApiUser();
   if (!user || !profile) {
     return apiError("Unauthorized.", 401);
@@ -29,7 +33,10 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const { profile } = await requireApiUser();
+  const rl = writeLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
+  const { user: actor, profile } = await requireApiUser();
   if (!profile || profile.role !== "admin") {
     return apiError("Forbidden.", 403);
   }
@@ -57,6 +64,7 @@ export async function POST(request: NextRequest) {
 
   const userId = createResult.data.user.id;
 
+  // Upsert user row first (FK dependency), then patient row
   const userUpsert = await (admin.from("users") as any).upsert(
     {
       id: userId,
@@ -86,14 +94,23 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (patientUpsert.error) {
+    // Clean up both auth user and orphaned users row
+    await (admin.from("users") as any).delete().eq("id", userId);
     await admin.auth.admin.deleteUser(userId);
     return apiError(patientUpsert.error.message, 400);
   }
+
+  fireAndForget(
+    createAuditLog("patient.created", "patients", patientUpsert.data.id, { email: parsed.data.email }, actor?.id)
+  );
 
   return apiSuccess({ user_id: userId, patient: patientUpsert.data }, { status: 201 });
 }
 
 export async function PATCH(request: NextRequest) {
+  const rl = writeLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user, profile } = await requireApiUser();
   if (!user || !profile) {
     return apiError("Unauthorized.", 401);
@@ -109,30 +126,37 @@ export async function PATCH(request: NextRequest) {
     }
 
     const client = createSupabaseAdminClient();
-    const userUpdate = await (client.from("users") as any)
-      .update({ full_name: parsed.data.full_name })
-      .eq("id", parsed.data.user_id)
-      .select("*")
-      .single();
+
+    // Run both updates in parallel — they target different tables
+    const [userUpdate, patientUpdate] = await Promise.all([
+      (client.from("users") as any)
+        .update({ full_name: parsed.data.full_name })
+        .eq("id", parsed.data.user_id)
+        .select("*")
+        .single(),
+      (client.from("patients") as any)
+        .update({
+          date_of_birth: parsed.data.date_of_birth || null,
+          phone: parsed.data.phone || null,
+          emergency_contact: parsed.data.emergency_contact || null,
+          insurance_provider: parsed.data.insurance_provider || null
+        })
+        .eq("user_id", parsed.data.user_id)
+        .select("*")
+        .single()
+    ]);
 
     if (userUpdate.error) {
       return apiError(userUpdate.error.message, 400);
     }
 
-    const patientUpdate = await (client.from("patients") as any)
-      .update({
-        date_of_birth: parsed.data.date_of_birth || null,
-        phone: parsed.data.phone || null,
-        emergency_contact: parsed.data.emergency_contact || null,
-        insurance_provider: parsed.data.insurance_provider || null
-      })
-      .eq("user_id", parsed.data.user_id)
-      .select("*")
-      .single();
-
     if (patientUpdate.error) {
       return apiError(patientUpdate.error.message, 400);
     }
+
+    fireAndForget(
+      createAuditLog("patient.updated", "patients", patientUpdate.data.id, { admin: true }, user.id)
+    );
 
     return apiSuccess({ user: userUpdate.data, patient: patientUpdate.data });
   }
@@ -154,30 +178,41 @@ export async function PATCH(request: NextRequest) {
     }
   })();
 
-  const userUpdate = await (client.from("users") as any)
-    .update({ full_name: parsed.data.full_name })
-    .eq("id", user.id)
-    .select("*")
-    .single();
+  // Run both updates in parallel
+  const userPayload: Record<string, unknown> = { full_name: parsed.data.full_name };
+  if (parsed.data.avatar_url !== undefined) {
+    userPayload.avatar_url = parsed.data.avatar_url || null;
+  }
+
+  const [userUpdate, patientUpdate] = await Promise.all([
+    (client.from("users") as any)
+      .update(userPayload)
+      .eq("id", user.id)
+      .select("*")
+      .single(),
+    (client.from("patients") as any)
+      .update({
+        date_of_birth: parsed.data.date_of_birth || null,
+        phone: parsed.data.phone || null,
+        emergency_contact: parsed.data.emergency_contact || null,
+        insurance_provider: parsed.data.insurance_provider || null
+      })
+      .eq("user_id", user.id)
+      .select("*")
+      .single()
+  ]);
 
   if (userUpdate.error) {
     return apiError(userUpdate.error.message, 400);
   }
 
-  const patientUpdate = await (client.from("patients") as any)
-    .update({
-      date_of_birth: parsed.data.date_of_birth || null,
-      phone: parsed.data.phone || null,
-      emergency_contact: parsed.data.emergency_contact || null,
-      insurance_provider: parsed.data.insurance_provider || null
-    })
-    .eq("user_id", user.id)
-    .select("*")
-    .single();
-
   if (patientUpdate.error) {
     return apiError(patientUpdate.error.message, 400);
   }
+
+  fireAndForget(
+    createAuditLog("patient.updated", "patients", patientUpdate.data.id, {}, user.id)
+  );
 
   return apiSuccess({
     user: userUpdate.data,
@@ -186,7 +221,10 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const { profile } = await requireApiUser();
+  const rl = writeLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
+  const { user: actor, profile } = await requireApiUser();
   if (!profile || profile.role !== "admin") {
     return apiError("Forbidden.", 403);
   }
@@ -201,6 +239,10 @@ export async function DELETE(request: NextRequest) {
   if (result.error) {
     return apiError(result.error.message, 400);
   }
+
+  fireAndForget(
+    createAuditLog("patient.deleted", "patients", null, { user_id: body.user_id }, actor?.id)
+  );
 
   return apiSuccess({ user_id: body.user_id });
 }

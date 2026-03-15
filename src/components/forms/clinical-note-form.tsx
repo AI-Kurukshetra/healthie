@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/components/ui/toast";
 import { clinicalNoteSchema } from "@/validators/clinical-note";
 
 type ClinicalNoteFormValues = {
@@ -28,6 +29,7 @@ export function ClinicalNoteForm({
   appointments: { id: string; patientId: string; label: string }[];
 }) {
   const router = useRouter();
+  const { success: toastSuccess, error: toastError } = useToast();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const { register, handleSubmit, watch } = useForm<ClinicalNoteFormValues>({
@@ -50,21 +52,31 @@ export function ClinicalNoteForm({
 
     setLoading(true);
     setError(null);
-    const response = await fetch("/api/records", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "clinical_note", ...parsed.data })
-    });
 
-    const payload = await response.json();
-    if (!response.ok) {
-      setError(payload.error ?? "Unable to save note.");
+    try {
+      const response = await fetch("/api/records", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "clinical_note", ...parsed.data })
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to save note.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
+
+      toastSuccess("Clinical note saved.");
+      router.refresh();
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    router.refresh();
-    setLoading(false);
   });
 
   return (

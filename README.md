@@ -1,61 +1,146 @@
-# Health Platform
+# Healthie — Health Platform
 
-A greenfield Next.js 14 + Supabase implementation of the development plan in `AI_DEVELOPMENT_PROMPT.md`.
+A full-stack healthcare management platform built with **Next.js 14**, **Supabase**, and **TailwindCSS**. Three user roles — **Patient**, **Provider**, and **Admin** — each with a dedicated portal.
 
-## Implemented phases
+---
 
-- Phase 1: Next.js 14 app scaffold with TypeScript, App Router, TailwindCSS, ESLint, required folders, and standard repo ignore rules.
-- Phase 2: Supabase browser/server/admin clients, shared client entrypoint, env template, CLI project config, and auth-aware middleware.
-- Phase 3: Initial SQL migration for users, organizations, patients, providers, appointments, medical records, clinical notes, prescriptions, messages, notifications, and audit logs.
-- Phase 4: Signup, login, logout, role-aware redirects, and protected patient/provider/admin portals.
-- Phase 5: Patient routes for dashboard, appointments, records, prescriptions, messaging, and editable settings.
-- Phase 6: Provider routes for dashboard, patients, appointments, SOAP notes, prescriptions, messaging, and editable settings.
-- Phase 7: Appointment booking, availability management, rescheduling, cancellation, and status updates.
-- Phase 8: MVP video consultation support through deterministic meeting-link generation and protected visit-room entry.
-- Phase 9: EHR data model, medical-record authoring, and Supabase Storage-backed document handling.
-- Phase 10: SOAP clinical note workflow, appointment attachment, and patient/provider note visibility.
-- Phase 11: Prescription workflow and patient-facing prescription history.
-- Phase 12: Messaging API, realtime message updates, and patient/provider conversation pickers.
-- Phase 13: Notification records, live notification polling/realtime updates, and appointment reminder generation.
-- Phase 14: RLS-oriented migrations, helper functions, role-scoped access, and audit-log writes.
-- Phase 15: Medical blue/white Tailwind UI system, responsive dashboards, and non-placeholder admin screens.
-- Phase 16: API routes for auth, patients, providers, appointments, records, prescriptions, messages, and notifications.
-- Phase 17: Deployment documentation for GitHub and Vercel, including required environment variables.
+## Getting Started
 
-## Required environment variables
+### Prerequisites
 
-Copy `.env.example` to `.env.local` and set:
+- Node.js 18+ and npm
+- A Supabase project (free tier works)
 
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `NEXT_PUBLIC_APP_URL`
+### Installation
 
-## Database setup
+```bash
+git clone <repository-url>
+cd healthie
+npm install
+```
 
-Apply all SQL files in `supabase/migrations/` in timestamp order:
+### Environment Variables
 
-1. `20260314093000_initial_schema.sql`
-2. `20260314134500_phase_7_9_12_support.sql`
-3. `20260314142000_phase_4_5_6_profile_visibility.sql`
-4. `20260314150000_phase_7_patient_appointment_updates.sql`
+Copy `.env.example` to `.env.local`:
 
-The `medical-documents` storage bucket is created by the migration stack.
+```
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
 
-## Local development
+### Database Setup
 
-1. Install dependencies with `npm install`.
-2. Configure `.env.local`.
-3. Apply the Supabase migrations.
-4. Install the Supabase CLI if you want local CLI workflows.
-5. Run `npm run dev`.
+Apply the SQL migrations in `supabase/migrations/` in order via the Supabase SQL editor or CLI (`supabase db push`).
+
+### Run
+
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+---
+
+## How to Use
+
+### Sign Up / Log In
+
+1. Go to `/signup`, enter email, password, and select a role (Patient, Provider, or Admin).
+2. You are redirected to your role-specific dashboard.
+3. Returning users can log in at `/login`.
+
+---
+
+### Patient
+
+- **Appointments** — Browse providers, pick an available slot, book a visit. Reschedule or cancel from the listing.
+- **Medical Records** — View your clinical history and uploaded documents.
+- **Prescriptions** — View active and past medications.
+- **Messages** — Secure conversations with your provider.
+- **Settings** — Update profile (name, phone, DOB, emergency contact, insurance, avatar) and change password.
+
+---
+
+### Provider
+
+- **Availability** — Set your weekly schedule (day, start/end time, slot duration) so patients can book.
+- **Patients** — View and manage your patient roster.
+- **Appointments** — View your schedule and update appointment status.
+- **Medical Records** — Create and manage patient records with document attachments.
+- **Clinical Notes** — Write SOAP notes and link them to appointments.
+- **Prescriptions** — Issue and manage prescriptions (medication, dosage, frequency, dates).
+- **Messages** — Secure conversations with patients.
+- **Analytics** — Operational metrics.
+- **Settings** — Update profile (name, specialty, license number, bio, avatar) and change password.
+
+---
+
+### Admin
+
+- **Patients / Providers** — Full CRUD: create accounts (email + password + profile), edit, or delete.
+- **Appointments** — Oversee and manage all appointments across the platform.
+- **Records / Notes / Prescriptions / Messages** — View, create, edit, and delete entries across all users.
+- **Analytics** — Platform-wide business intelligence.
+- **Profile** — Update admin name, avatar, and change password.
+- **Settings** — Platform stats and full audit trail (every action logged with actor, entity, and timestamp).
+
+---
+
+## Verification Steps
+
+Follow these steps in order to verify the full workflow across all roles.
+
+### 1. Setup
+
+1. Complete the [Getting Started](#getting-started) steps above.
+2. Confirm the app loads at `http://localhost:3000`.
+
+### 2. Admin
+
+1. Sign up at `/signup` with role **Admin**.
+2. Go to **Providers** → create a new provider account.
+3. Go to **Patients** → create a new patient account.
+4. Go to **Profile** → update your name and change your password.
+5. Go to **Settings** → confirm platform stats show the created users and the audit trail logs your actions.
+
+### 3. Provider
+
+1. Log out and log in with the **provider** account created above.
+2. Go to **Settings** → set up weekly availability (at least one day with time slots).
+3. Go to **Medical Records** → create a record for the patient.
+4. Go to **Clinical Notes** → create a SOAP note for the patient.
+5. Go to **Prescriptions** → issue a prescription for the patient.
+6. Go to **Messages** → send a message to the patient.
+7. Update your profile and change your password from **Settings**.
+
+### 4. Patient
+
+1. Log out and log in with the **patient** account created above.
+2. Go to **Appointments** → book an appointment with the provider (should see available slots).
+3. Reschedule or cancel the appointment from the listing.
+4. Go to **Medical Records** → confirm the record created by the provider is visible.
+5. Go to **Prescriptions** → confirm the prescription is visible.
+6. Go to **Messages** → reply to the provider's message.
+7. Update your profile and change your password from **Settings**.
+
+### 5. Admin — Final Check
+
+1. Log back in as **Admin**.
+2. Go to **Appointments** → confirm the patient's appointment appears.
+3. Go to **Records / Notes / Prescriptions / Messages** → confirm all entries from above are visible.
+4. Go to **Settings** → verify the audit trail captured every action across all roles.
+
+---
 
 ## Deployment
 
-See [DEPLOYMENT.md](./DEPLOYMENT.md) for the GitHub and Vercel deployment checklist.
+See [DEPLOYMENT.md](./DEPLOYMENT.md).
 
-## Notes
+---
 
-- The workspace started empty apart from the prompt file, so the project was scaffolded manually instead of using `create-next-app`.
-- External operations such as dependency installation, Supabase project creation, GitHub push, and Vercel deployment are documented but not executed from this workspace.
-- Notifications and audit-log inserts use the service-role client when available, which avoids RLS conflicts for server-side system events.
+## Tech Stack
+
+Next.js 14 (App Router) | Supabase (PostgreSQL + Auth) | TailwindCSS | TypeScript | Zod | Lucide React

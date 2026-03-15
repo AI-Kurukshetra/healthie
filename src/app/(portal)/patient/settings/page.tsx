@@ -1,5 +1,6 @@
 import { format } from "date-fns";
 
+import { ChangePasswordForm } from "@/components/forms/change-password-form";
 import { PatientSettingsForm } from "@/components/forms/patient-settings-form";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Card } from "@/components/ui/card";
@@ -26,7 +27,8 @@ export default async function PatientSettingsPage() {
           date_of_birth: patient.date_of_birth ?? "",
           phone: patient.phone ?? "",
           emergency_contact: patient.emergency_contact ?? "",
-          insurance_provider: patient.insurance_provider ?? ""
+          insurance_provider: patient.insurance_provider ?? "",
+          avatar_url: profile.avatar_url ?? ""
         }}
       />
 
@@ -48,6 +50,10 @@ export default async function PatientSettingsPage() {
           </div>
         </div>
       </Card>
+
+      <div className="xl:col-span-2">
+        <ChangePasswordForm />
+      </div>
     </div>
   );
 }

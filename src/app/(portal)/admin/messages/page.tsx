@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 
-import { AdminMessageManager } from "@/components/admin/admin-message-manager";
+import { AdminMessageDirectory } from "@/components/admin/admin-message-directory";
 import { requireRole } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Message, UserProfile } from "@/types/domain";
@@ -16,5 +16,5 @@ export default async function AdminMessagesPage() {
   const messages = (messagesQuery.data ?? []) as Message[];
   const users = (usersQuery.data ?? []) as UserProfile[];
 
-  return <AdminMessageManager messages={messages} users={users} />;
+  return <AdminMessageDirectory messages={messages} users={users} />;
 }

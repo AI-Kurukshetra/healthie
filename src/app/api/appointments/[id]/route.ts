@@ -2,9 +2,10 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { createAuditLog, notifyUser, refreshPortalPaths, requireApiUser } from "@/app/api/_utils/helpers";
+import { createAuditLog, fireAndForget, notifyUser, refreshPortalPaths, requireApiUser } from "@/app/api/_utils/helpers";
 import { apiError, apiSuccess } from "@/lib/api";
 import { APPOINTMENT_STATUSES } from "@/lib/constants";
+import { apiLimiter, getClientKey, rateLimitResponse, writeLimiter } from "@/lib/rate-limit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseRouteHandlerClient } from "@/lib/supabase/server";
 import { updateAppointment } from "@/repositories/appointmentRepository";
@@ -68,16 +69,40 @@ async function notifyAppointmentParticipants(
   const patientUserId = (patientQuery.data as { user_id: string } | null)?.user_id;
   const providerUserId = (providerQuery.data as { user_id: string } | null)?.user_id;
 
+  // Notify both participants in parallel
+  const notifications: Promise<any>[] = [];
   if (patientUserId && patientUserId !== actorUserId) {
-    await notifyUser(patientUserId, "appointment", title, body);
+    notifications.push(notifyUser(patientUserId, "appointment", title, body));
+  }
+  if (providerUserId && providerUserId !== actorUserId) {
+    notifications.push(notifyUser(providerUserId, "appointment", title, body));
+  }
+  await Promise.all(notifications);
+}
+
+export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+  const rl = apiLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
+  const { supabase, user, profile } = await requireApiUser();
+  if (!user || !profile) {
+    return apiError("Unauthorized.", 401);
   }
 
-  if (providerUserId && providerUserId !== actorUserId) {
-    await notifyUser(providerUserId, "appointment", title, body);
+  const client = profile.role === "admin" ? (getAdminClient() ?? supabase) : supabase;
+  const appointmentQuery = await client.from("appointments").select("*").eq("id", params.id).maybeSingle();
+
+  if (!appointmentQuery.data) {
+    return apiError("Appointment not found.", 404);
   }
+
+  return apiSuccess(appointmentQuery.data);
 }
 
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+  const rl = writeLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user, profile } = await requireApiUser();
   if (!user || !profile) {
     return apiError("Unauthorized.", 401);
@@ -86,8 +111,8 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   // Admin uses admin client to bypass RLS
   const client = profile.role === "admin" ? (getAdminClient() ?? supabase) : supabase;
 
-  const appointmentQuery = await client.from("appointments").select("*").eq("id", params.id).maybeSingle();
-  const appointment = appointmentQuery.data as { id: string; patient_id: string; provider_id: string } | null;
+  const appointmentQuery = await client.from("appointments").select("id, patient_id, provider_id, status").eq("id", params.id).maybeSingle();
+  const appointment = appointmentQuery.data as { id: string; patient_id: string; provider_id: string; status: string } | null;
 
   if (!appointment) {
     return apiError("Appointment not found.", 404);
@@ -129,9 +154,12 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   const bodyText = body.scheduled_at
     ? `Appointment updated for ${new Date(String(body.scheduled_at)).toLocaleString()}.`
     : `Appointment status changed to ${String(payload.status ?? data.status)}.`;
-  await notifyAppointmentParticipants(client, data, user.id, "Appointment updated", bodyText);
 
-  await createAuditLog("appointment.updated", "appointments", data.id, payload, user.id);
+  // Fire notifications + audit in background
+  fireAndForget(
+    notifyAppointmentParticipants(client, data, user.id, "Appointment updated", bodyText),
+    createAuditLog("appointment.updated", "appointments", data.id, payload, user.id)
+  );
   refreshPortalPaths(["/patient/appointments", "/provider/appointments", "/patient/dashboard", "/provider/dashboard"]);
   return apiSuccess(data);
 }
@@ -148,7 +176,8 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
   const { data } = await updateAppointment(supabase, params.id, { status });
 
   if (data) {
-    await notifyAppointmentParticipants(supabase, data, "", "Appointment updated", `Appointment status changed to ${status}.`);
+    // Fire in background
+    fireAndForget(notifyAppointmentParticipants(supabase, data, "", "Appointment updated", `Appointment status changed to ${status}.`));
   }
 
   refreshPortalPaths(["/patient/appointments", "/provider/appointments"]);
@@ -156,6 +185,9 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 }
 
 export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+  const rl = writeLimiter.check(getClientKey(request));
+  if (!rl.allowed) return rateLimitResponse(rl);
+
   const { supabase, user, profile } = await requireApiUser();
   if (!user || !profile) {
     return apiError("Unauthorized.", 401);
@@ -180,8 +212,11 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
     return apiError(error.message, 400);
   }
 
-  await notifyAppointmentParticipants(client, appointment, user.id, "Appointment cancelled", "An appointment has been cancelled.");
-  await createAuditLog("appointment.deleted", "appointments", params.id, {}, user.id);
+  // Fire notifications + audit in background
+  fireAndForget(
+    notifyAppointmentParticipants(client, appointment, user.id, "Appointment cancelled", "An appointment has been cancelled."),
+    createAuditLog("appointment.deleted", "appointments", params.id, {}, user.id)
+  );
   refreshPortalPaths(["/patient/appointments", "/provider/appointments"]);
   return apiSuccess({ id: params.id });
 }

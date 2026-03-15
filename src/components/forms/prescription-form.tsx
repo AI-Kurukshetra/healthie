@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/components/ui/toast";
 import { prescriptionSchema } from "@/validators/prescription";
 
 type PrescriptionFormValues = {
@@ -28,6 +29,7 @@ export function PrescriptionForm({
   patients: { id: string; name: string }[];
 }) {
   const router = useRouter();
+  const { success: toastSuccess, error: toastError } = useToast();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const { register, handleSubmit } = useForm<PrescriptionFormValues>({
@@ -43,21 +45,31 @@ export function PrescriptionForm({
 
     setLoading(true);
     setError(null);
-    const response = await fetch("/api/prescriptions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(parsed.data)
-    });
 
-    const payload = await response.json();
-    if (!response.ok) {
-      setError(payload.error ?? "Unable to issue prescription.");
+    try {
+      const response = await fetch("/api/prescriptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(parsed.data)
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to issue prescription.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
+
+      toastSuccess("Prescription issued successfully.");
+      router.refresh();
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    router.refresh();
-    setLoading(false);
   });
 
   return (

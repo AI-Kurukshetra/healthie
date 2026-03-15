@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 
-import { AdminClinicalNoteManager } from "@/components/admin/admin-clinical-note-manager";
+import { AdminClinicalNoteDirectory } from "@/components/admin/admin-clinical-note-directory";
 import { requireRole } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { listAppointments } from "@/repositories/appointmentRepository";
@@ -23,5 +23,12 @@ export default async function AdminNotesPage() {
   const patients = (patientsQuery.data ?? []) as Patient[];
   const providers = (providersQuery.data ?? []) as Provider[];
 
-  return <AdminClinicalNoteManager appointments={appointments} notes={notes} patients={patients as any} providers={providers as any} />;
+  return (
+    <AdminClinicalNoteDirectory
+      appointments={appointments}
+      notes={notes}
+      patients={patients as any}
+      providers={providers as any}
+    />
+  );
 }

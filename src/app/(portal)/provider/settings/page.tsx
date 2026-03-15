@@ -1,5 +1,6 @@
 import { format } from "date-fns";
 
+import { ChangePasswordForm } from "@/components/forms/change-password-form";
 import { ProviderSettingsForm } from "@/components/forms/provider-settings-form";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Card } from "@/components/ui/card";
@@ -25,7 +26,8 @@ export default async function ProviderSettingsPage() {
           email: profile.email,
           specialty: provider.specialty ?? "",
           license_number: provider.license_number ?? "",
-          bio: provider.bio ?? ""
+          bio: provider.bio ?? "",
+          avatar_url: profile.avatar_url ?? ""
         }}
       />
 
@@ -47,6 +49,10 @@ export default async function ProviderSettingsPage() {
           </div>
         </div>
       </Card>
+
+      <div className="xl:col-span-2">
+        <ChangePasswordForm />
+      </div>
     </div>
   );
 }

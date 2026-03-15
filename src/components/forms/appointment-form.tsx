@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/components/ui/toast";
 import { appointmentSchema } from "@/validators/appointment";
 import type { ProviderAvailability } from "@/types/domain";
 
@@ -39,6 +40,7 @@ export function AppointmentForm({
   providers: { id: string; name: string; availability: ProviderAvailability[] }[];
 }) {
   const router = useRouter();
+  const { success: toastSuccess, error: toastError } = useToast();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const { register, handleSubmit, watch } = useForm<AppointmentFormValues>({
@@ -71,21 +73,31 @@ export function AppointmentForm({
 
     setLoading(true);
     setError(null);
-    const response = await fetch("/api/appointments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(parsed.data)
-    });
 
-    const payload = await response.json();
-    if (!response.ok) {
-      setError(payload.error ?? "Unable to book appointment.");
+    try {
+      const response = await fetch("/api/appointments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(parsed.data)
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to book appointment.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
+
+      toastSuccess("Appointment booked successfully.");
+      router.refresh();
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    router.refresh();
-    setLoading(false);
   });
 
   return (

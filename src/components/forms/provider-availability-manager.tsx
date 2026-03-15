@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { useToast } from "@/components/ui/toast";
 import { providerAvailabilitySchema } from "@/validators/provider-availability";
 import type { ProviderAvailability } from "@/types/domain";
 
@@ -29,6 +30,7 @@ export function ProviderAvailabilityManager({
   availability: ProviderAvailability[];
 }) {
   const router = useRouter();
+  const { success: toastSuccess, error: toastError } = useToast();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -58,47 +60,65 @@ export function ProviderAvailabilityManager({
     setLoading(true);
     setError(null);
 
-    const response = await fetch("/api/providers/availability", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(parsed.data)
-    });
+    try {
+      const response = await fetch("/api/providers/availability", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(parsed.data)
+      });
 
-    const payload = await response.json();
-    if (!response.ok) {
-      setError(payload.error ?? "Unable to save availability.");
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to save availability.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
+
+      toastSuccess("Availability saved.");
+      reset({
+        provider_id: providerId,
+        day_of_week: values.day_of_week,
+        start_time: "09:00",
+        end_time: "17:00",
+        slot_duration_minutes: values.slot_duration_minutes
+      });
+      router.refresh();
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    reset({
-      provider_id: providerId,
-      day_of_week: values.day_of_week,
-      start_time: "09:00",
-      end_time: "17:00",
-      slot_duration_minutes: values.slot_duration_minutes
-    });
-    router.refresh();
-    setLoading(false);
   });
 
   async function removeAvailability(id: string) {
     setDeletingId(id);
     setError(null);
 
-    const response = await fetch(`/api/providers/availability?id=${id}`, {
-      method: "DELETE"
-    });
+    try {
+      const response = await fetch(`/api/providers/availability?id=${id}`, {
+        method: "DELETE"
+      });
 
-    const payload = await response.json();
-    if (!response.ok) {
-      setError(payload.error ?? "Unable to delete availability.");
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to delete availability.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
+
+      toastSuccess("Availability removed.");
+      router.refresh();
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
       setDeletingId(null);
-      return;
     }
-
-    router.refresh();
-    setDeletingId(null);
   }
 
   return (

@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { buttonVariants, Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useToast } from "@/components/ui/toast";
 import type { Appointment } from "@/types/domain";
 
 type Props = {
@@ -17,6 +18,7 @@ type Props = {
 
 export function PatientAppointmentList({ appointments, providerNames }: Props) {
   const router = useRouter();
+  const { success: toastSuccess, error: toastError } = useToast();
   const [error, setError] = useState<string | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [rescheduleValues, setRescheduleValues] = useState<Record<string, string>>({});
@@ -25,21 +27,30 @@ export function PatientAppointmentList({ appointments, providerNames }: Props) {
     setLoadingId(id);
     setError(null);
 
-    const response = await fetch(`/api/appointments/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
+    try {
+      const response = await fetch(`/api/appointments/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
 
-    const payload = await response.json();
-    if (!response.ok) {
-      setError(payload.error ?? "Unable to update appointment.");
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to update appointment.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
+
+      toastSuccess("Appointment updated.");
+      router.refresh();
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
       setLoadingId(null);
-      return;
     }
-
-    router.refresh();
-    setLoadingId(null);
   }
 
   return (

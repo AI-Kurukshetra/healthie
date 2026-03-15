@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { ClipboardList, Plus, SquarePen, Trash2, X } from "lucide-react";
+import { CalendarDays, ClipboardList, Plus, Search, SquarePen, Stethoscope, Trash2, X } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/shared/empty-state";
+import { useToast } from "@/components/ui/toast";
 import type { Appointment, ClinicalNote, Patient, Provider } from "@/types/domain";
 
 export function AdminClinicalNoteManager({
@@ -27,15 +28,29 @@ export function AdminClinicalNoteManager({
   providers: Provider[];
 }) {
   const router = useRouter();
+  const { success: toastSuccess, error: toastError } = useToast();
   const formRef = useRef<HTMLFormElement>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingNote, setEditingNote] = useState<ClinicalNote | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
-  const patientMap = new Map(patients.map((p) => [p.id, p.user?.full_name ?? p.user?.email ?? "Patient"]));
-  const providerMap = new Map(providers.map((p) => [p.id, p.user?.full_name ?? p.user?.email ?? "Provider"]));
+  const patientMap = useMemo(() => new Map(patients.map((p) => [p.id, p.user?.full_name ?? p.user?.email ?? "Patient"])), [patients]);
+  const providerMap = useMemo(() => new Map(providers.map((p) => [p.id, p.user?.full_name ?? p.user?.email ?? "Provider"])), [providers]);
+
+  const filtered = useMemo(() => {
+    if (!query.trim()) return notes;
+    const q = query.toLowerCase();
+    return notes.filter((n) => {
+      const patient = (patientMap.get(n.patient_id) ?? "").toLowerCase();
+      const provider = (providerMap.get(n.provider_id) ?? "").toLowerCase();
+      const assessment = (n.assessment ?? "").toLowerCase();
+      const subjective = (n.subjective ?? "").toLowerCase();
+      return patient.includes(q) || provider.includes(q) || assessment.includes(q) || subjective.includes(q);
+    });
+  }, [notes, query, patientMap, providerMap]);
 
   async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -43,32 +58,42 @@ export function AdminClinicalNoteManager({
     setError(null);
     const fd = new FormData(event.currentTarget);
 
-    const response = await fetch("/api/records", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "clinical_note",
-        appointment_id: String(fd.get("appointment_id") ?? ""),
-        provider_id: String(fd.get("provider_id") ?? ""),
-        patient_id: String(fd.get("patient_id") ?? ""),
-        subjective: String(fd.get("subjective") ?? ""),
-        objective: String(fd.get("objective") ?? ""),
-        assessment: String(fd.get("assessment") ?? ""),
-        plan: String(fd.get("plan") ?? "")
-      })
-    });
+    try {
+      const response = await fetch("/api/records", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "clinical_note",
+          appointment_id: String(fd.get("appointment_id") ?? ""),
+          provider_id: String(fd.get("provider_id") ?? ""),
+          patient_id: String(fd.get("patient_id") ?? ""),
+          subjective: String(fd.get("subjective") ?? "").trim(),
+          objective: String(fd.get("objective") ?? "").trim(),
+          assessment: String(fd.get("assessment") ?? "").trim(),
+          plan: String(fd.get("plan") ?? "").trim()
+        })
+      });
 
-    const payload = await response.json();
-    setLoading(false);
-    if (!response.ok) {
-      setError(payload.error ?? "Unable to create note.");
-      return;
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to create note.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
+
+      toastSuccess("Clinical note created.");
+      formRef.current?.reset();
+      setShowForm(false);
+      setError(null);
+      router.refresh();
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
+      setLoading(false);
     }
-
-    formRef.current?.reset();
-    setShowForm(false);
-    setError(null);
-    router.refresh();
   }
 
   async function handleUpdate(event: React.FormEvent<HTMLFormElement>) {
@@ -78,45 +103,63 @@ export function AdminClinicalNoteManager({
     setError(null);
     const fd = new FormData(event.currentTarget);
 
-    const response = await fetch("/api/records", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "clinical_note",
-        id: editingNote.id,
-        appointment_id: String(fd.get("appointment_id") ?? ""),
-        provider_id: String(fd.get("provider_id") ?? ""),
-        patient_id: String(fd.get("patient_id") ?? ""),
-        subjective: String(fd.get("subjective") ?? ""),
-        objective: String(fd.get("objective") ?? ""),
-        assessment: String(fd.get("assessment") ?? ""),
-        plan: String(fd.get("plan") ?? "")
-      })
-    });
+    try {
+      const response = await fetch("/api/records", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "clinical_note",
+          id: editingNote.id,
+          appointment_id: String(fd.get("appointment_id") ?? ""),
+          provider_id: String(fd.get("provider_id") ?? ""),
+          patient_id: String(fd.get("patient_id") ?? ""),
+          subjective: String(fd.get("subjective") ?? "").trim(),
+          objective: String(fd.get("objective") ?? "").trim(),
+          assessment: String(fd.get("assessment") ?? "").trim(),
+          plan: String(fd.get("plan") ?? "").trim()
+        })
+      });
 
-    setBusyId(null);
-    if (!response.ok) {
-      const payload = await response.json();
-      setError(payload.error ?? "Unable to update note.");
-      return;
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to update note.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
+
+      toastSuccess("Clinical note updated.");
+      setEditingNote(null);
+      setError(null);
+      router.refresh();
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
+      setBusyId(null);
     }
-
-    setEditingNote(null);
-    setError(null);
-    router.refresh();
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this clinical note? This cannot be undone.")) return;
+    if (!window.confirm("Delete this clinical note? This cannot be undone.")) return;
     setBusyId(id);
-    await fetch("/api/records", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "clinical_note", id })
-    });
-    setBusyId(null);
-    if (editingNote?.id === id) setEditingNote(null);
-    router.refresh();
+
+    try {
+      const res = await fetch("/api/records", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "clinical_note", id })
+      });
+      if (res.ok) toastSuccess("Clinical note deleted.");
+      else toastError("Unable to delete note.");
+      if (editingNote?.id === id) setEditingNote(null);
+      router.refresh();
+    } catch {
+      toastError("Network error. Please check your connection and try again.");
+    } finally {
+      setBusyId(null);
+    }
   }
 
   function openEdit(note: ClinicalNote) {
@@ -155,15 +198,24 @@ export function AdminClinicalNoteManager({
 
         <div className="mt-6 grid gap-4 sm:grid-cols-3">
           <div className="rounded-[22px] border border-border/80 bg-white/85 p-4 shadow-soft">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Total notes</p>
+            <div className="flex items-center gap-2">
+              <ClipboardList className="h-4 w-4 text-primary-deep" />
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Total notes</p>
+            </div>
             <p className="mt-2 text-3xl font-semibold text-ink">{notes.length}</p>
           </div>
           <div className="rounded-[22px] border border-border/80 bg-white/85 p-4 shadow-soft">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Appointments</p>
+            <div className="flex items-center gap-2">
+              <CalendarDays className="h-4 w-4 text-primary-deep" />
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Appointments</p>
+            </div>
             <p className="mt-2 text-3xl font-semibold text-ink">{appointments.length}</p>
           </div>
           <div className="rounded-[22px] border border-border/80 bg-white/85 p-4 shadow-soft">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Providers</p>
+            <div className="flex items-center gap-2">
+              <Stethoscope className="h-4 w-4 text-primary-deep" />
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Providers</p>
+            </div>
             <p className="mt-2 text-3xl font-semibold text-ink">{providers.length}</p>
           </div>
         </div>
@@ -299,17 +351,30 @@ export function AdminClinicalNoteManager({
 
       {/* Data Table */}
       <Card className="overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-5">
-          <div>
-            <h3 className="text-lg font-semibold text-ink">Notes roster</h3>
-            <p className="mt-1 text-sm text-muted">SOAP notes linked to patient appointments.</p>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4">
+          <div className="relative w-full max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+            <Input
+              className="pl-9"
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by patient, provider, assessment..."
+              type="search"
+              value={query}
+            />
           </div>
-          <Badge>{notes.length} rows</Badge>
+          <div className="flex items-center gap-3">
+            <Badge>{filtered.length} of {notes.length}</Badge>
+          </div>
         </div>
 
-        {notes.length === 0 ? (
+        {filtered.length === 0 && query.trim() === "" ? (
           <div className="p-6">
             <EmptyState description="No clinical notes yet. Click 'Add note' above to create the first entry." title="No notes found" />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="px-6 py-12 text-center">
+            <p className="text-sm font-medium text-ink">No notes match &ldquo;{query}&rdquo;</p>
+            <p className="mt-1 text-xs text-muted">Try a different search term or clear the filter.</p>
           </div>
         ) : (
           <>
@@ -318,17 +383,17 @@ export function AdminClinicalNoteManager({
               <table className="min-w-full divide-y divide-border text-left text-sm">
                 <thead className="bg-surface-muted text-muted">
                   <tr>
-                    <th className="px-6 py-4 font-semibold">Patient</th>
-                    <th className="px-6 py-4 font-semibold">Provider</th>
-                    <th className="px-6 py-4 font-semibold">Appointment</th>
-                    <th className="px-6 py-4 font-semibold">Assessment</th>
-                    <th className="px-6 py-4 font-semibold">Created</th>
-                    <th className="px-6 py-4 text-right font-semibold">Actions</th>
+                    <th className="px-6 py-3.5 font-semibold">Patient</th>
+                    <th className="px-6 py-3.5 font-semibold">Provider</th>
+                    <th className="px-6 py-3.5 font-semibold">Appointment</th>
+                    <th className="px-6 py-3.5 font-semibold">Assessment</th>
+                    <th className="px-6 py-3.5 font-semibold">Created</th>
+                    <th className="px-6 py-3.5 text-right font-semibold">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border bg-white">
-                  {notes.map((note) => (
-                    <tr key={note.id} className={`align-middle ${editingNote?.id === note.id ? "bg-primary-soft/30" : ""}`}>
+                  {filtered.map((note) => (
+                    <tr key={note.id} className={`align-middle transition-colors hover:bg-surface-muted/50 ${editingNote?.id === note.id ? "bg-primary-soft/30" : ""}`}>
                       <td className="px-6 py-4">
                         <div className="flex min-w-[160px] items-center gap-3">
                           <Avatar className="h-9 w-9 shrink-0" name={patientMap.get(note.patient_id)} />
@@ -357,8 +422,8 @@ export function AdminClinicalNoteManager({
 
             {/* Mobile cards */}
             <div className="space-y-3 p-4 lg:hidden">
-              {notes.map((note) => (
-                <div key={note.id} className={`rounded-[22px] border p-4 ${editingNote?.id === note.id ? "border-primary/30 bg-primary-soft/20" : "border-border/80 bg-surface-muted"}`}>
+              {filtered.map((note) => (
+                <div key={note.id} className={`rounded-[22px] border p-4 ${editingNote?.id === note.id ? "border-primary/30 bg-primary-soft/20" : "border-border/80 bg-white shadow-soft transition-shadow hover:shadow-card"}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="font-semibold text-ink">{note.assessment}</p>

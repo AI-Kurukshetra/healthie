@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { CalendarDays, Plus, SquarePen, Trash2, X } from "lucide-react";
+import { CalendarDays, CheckCircle2, Clock, Plus, Search, SquarePen, Trash2, X } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { EmptyState } from "@/components/shared/empty-state";
+import { useToast } from "@/components/ui/toast";
 import type { Appointment, Patient, Provider } from "@/types/domain";
 
 const statusStyles: Record<string, string> = {
@@ -38,15 +39,29 @@ export function AdminAppointmentManager({
   providers: Provider[];
 }) {
   const router = useRouter();
+  const { success: toastSuccess, error: toastError } = useToast();
   const formRef = useRef<HTMLFormElement>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
-  const patientMap = new Map(patients.map((p) => [p.id, p.user?.full_name ?? p.user?.email ?? "Patient"]));
-  const providerMap = new Map(providers.map((p) => [p.id, p.user?.full_name ?? p.user?.email ?? "Provider"]));
+  const patientMap = useMemo(() => new Map(patients.map((p) => [p.id, p.user?.full_name ?? p.user?.email ?? "Patient"])), [patients]);
+  const providerMap = useMemo(() => new Map(providers.map((p) => [p.id, p.user?.full_name ?? p.user?.email ?? "Provider"])), [providers]);
+
+  const filtered = useMemo(() => {
+    if (!query.trim()) return appointments;
+    const q = query.toLowerCase();
+    return appointments.filter((a) => {
+      const patient = (patientMap.get(a.patient_id) ?? "").toLowerCase();
+      const provider = (providerMap.get(a.provider_id) ?? "").toLowerCase();
+      const reason = (a.reason ?? "").toLowerCase();
+      const status = a.status.toLowerCase();
+      return patient.includes(q) || provider.includes(q) || reason.includes(q) || status.includes(q);
+    });
+  }, [appointments, query, patientMap, providerMap]);
 
   const pendingCount = appointments.filter((a) => a.status === "pending").length;
   const confirmedCount = appointments.filter((a) => a.status === "confirmed").length;
@@ -58,30 +73,39 @@ export function AdminAppointmentManager({
     setError(null);
     const fd = new FormData(event.currentTarget);
 
-    const response = await fetch("/api/appointments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        patient_id: String(fd.get("patient_id") ?? ""),
-        provider_id: String(fd.get("provider_id") ?? ""),
-        scheduled_at: new Date(String(fd.get("scheduled_at") ?? "")).toISOString(),
-        status: String(fd.get("status") ?? "pending"),
-        reason: String(fd.get("reason") ?? "")
-      })
-    });
+    try {
+      const response = await fetch("/api/appointments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patient_id: String(fd.get("patient_id") ?? ""),
+          provider_id: String(fd.get("provider_id") ?? ""),
+          scheduled_at: new Date(String(fd.get("scheduled_at") ?? "")).toISOString(),
+          status: String(fd.get("status") ?? "pending"),
+          reason: String(fd.get("reason") ?? "").trim()
+        })
+      });
 
-    const payload = await response.json();
-    setLoading(false);
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to create appointment.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
 
-    if (!response.ok) {
-      setError(payload.error ?? "Unable to create appointment.");
-      return;
+      toastSuccess("Appointment created.");
+      formRef.current?.reset();
+      setShowForm(false);
+      setError(null);
+      router.refresh();
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
+      setLoading(false);
     }
-
-    formRef.current?.reset();
-    setShowForm(false);
-    setError(null);
-    router.refresh();
   }
 
   async function handleUpdate(event: React.FormEvent<HTMLFormElement>) {
@@ -91,35 +115,52 @@ export function AdminAppointmentManager({
     setError(null);
     const fd = new FormData(event.currentTarget);
 
-    const response = await fetch(`/api/appointments/${editingAppointment.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        scheduled_at: new Date(String(fd.get("scheduled_at") ?? "")).toISOString(),
-        status: String(fd.get("status") ?? "pending")
-      })
-    });
+    try {
+      const response = await fetch(`/api/appointments/${editingAppointment.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scheduled_at: new Date(String(fd.get("scheduled_at") ?? "")).toISOString(),
+          status: String(fd.get("status") ?? "pending")
+        })
+      });
 
-    setBusyId(null);
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload?.error ?? "Unable to update appointment.";
+        setError(msg);
+        toastError(msg);
+        return;
+      }
 
-    if (!response.ok) {
-      const payload = await response.json();
-      setError(payload.error ?? "Unable to update appointment.");
-      return;
+      toastSuccess("Appointment updated.");
+      setEditingAppointment(null);
+      setError(null);
+      router.refresh();
+    } catch {
+      const msg = "Network error. Please check your connection and try again.";
+      setError(msg);
+      toastError(msg);
+    } finally {
+      setBusyId(null);
     }
-
-    setEditingAppointment(null);
-    setError(null);
-    router.refresh();
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this appointment? This cannot be undone.")) return;
+    if (!window.confirm("Delete this appointment? This cannot be undone.")) return;
     setBusyId(id);
-    await fetch(`/api/appointments/${id}`, { method: "DELETE" });
-    setBusyId(null);
-    if (editingAppointment?.id === id) setEditingAppointment(null);
-    router.refresh();
+
+    try {
+      const res = await fetch(`/api/appointments/${id}`, { method: "DELETE" });
+      if (res.ok) toastSuccess("Appointment deleted.");
+      else toastError("Unable to delete appointment.");
+      if (editingAppointment?.id === id) setEditingAppointment(null);
+      router.refresh();
+    } catch {
+      toastError("Network error. Please check your connection and try again.");
+    } finally {
+      setBusyId(null);
+    }
   }
 
   function openEdit(appointment: Appointment) {
@@ -152,19 +193,31 @@ export function AdminAppointmentManager({
 
         <div className="mt-6 grid gap-4 sm:grid-cols-4">
           <div className="rounded-[22px] border border-border/80 bg-white/85 p-4 shadow-soft">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Total</p>
+            <div className="flex items-center gap-2">
+              <CalendarDays className="h-4 w-4 text-primary-deep" />
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary-deep">Total</p>
+            </div>
             <p className="mt-2 text-3xl font-semibold text-ink">{appointments.length}</p>
           </div>
           <div className="rounded-[22px] border border-border/80 bg-white/85 p-4 shadow-soft">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-600">Pending</p>
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4 text-amber-600" />
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-600">Pending</p>
+            </div>
             <p className="mt-2 text-3xl font-semibold text-amber-700">{pendingCount}</p>
           </div>
           <div className="rounded-[22px] border border-border/80 bg-white/85 p-4 shadow-soft">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-600">Confirmed</p>
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-600">Confirmed</p>
+            </div>
             <p className="mt-2 text-3xl font-semibold text-emerald-700">{confirmedCount}</p>
           </div>
           <div className="rounded-[22px] border border-border/80 bg-white/85 p-4 shadow-soft">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-600">Completed</p>
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-blue-600" />
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-600">Completed</p>
+            </div>
             <p className="mt-2 text-3xl font-semibold text-blue-700">{completedCount}</p>
           </div>
         </div>
@@ -311,17 +364,30 @@ export function AdminAppointmentManager({
 
       {/* Appointment Table — clean, no inline editing */}
       <Card className="overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-5">
-          <div>
-            <h3 className="text-lg font-semibold text-ink">Appointment roster</h3>
-            <p className="mt-1 text-sm text-muted">A data grid for reviewing schedule, status, and managing visits.</p>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4">
+          <div className="relative w-full max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+            <Input
+              className="pl-9"
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by patient, provider, reason, or status..."
+              type="search"
+              value={query}
+            />
           </div>
-          <Badge>{appointments.length} rows</Badge>
+          <div className="flex items-center gap-3">
+            <Badge>{filtered.length} of {appointments.length}</Badge>
+          </div>
         </div>
 
-        {appointments.length === 0 ? (
+        {filtered.length === 0 && query.trim() === "" ? (
           <div className="p-6">
             <EmptyState description="No appointments have been created yet. Click 'Add appointment' above to schedule the first visit." title="No appointments found" />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="px-6 py-12 text-center">
+            <p className="text-sm font-medium text-ink">No appointments match &ldquo;{query}&rdquo;</p>
+            <p className="mt-1 text-xs text-muted">Try a different search term or clear the filter.</p>
           </div>
         ) : (
           <>
@@ -330,19 +396,19 @@ export function AdminAppointmentManager({
               <table className="min-w-full divide-y divide-border text-left text-sm">
                 <thead className="bg-surface-muted text-muted">
                   <tr>
-                    <th className="px-6 py-4 font-semibold">Patient</th>
-                    <th className="px-6 py-4 font-semibold">Provider</th>
-                    <th className="px-6 py-4 font-semibold">Scheduled</th>
-                    <th className="px-6 py-4 font-semibold">Reason</th>
-                    <th className="px-6 py-4 font-semibold">Status</th>
-                    <th className="px-6 py-4 text-right font-semibold">Actions</th>
+                    <th className="px-6 py-3.5 font-semibold">Patient</th>
+                    <th className="px-6 py-3.5 font-semibold">Provider</th>
+                    <th className="px-6 py-3.5 font-semibold">Scheduled</th>
+                    <th className="px-6 py-3.5 font-semibold">Reason</th>
+                    <th className="px-6 py-3.5 font-semibold">Status</th>
+                    <th className="px-6 py-3.5 text-right font-semibold">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border bg-white">
-                  {appointments.map((appointment) => (
+                  {filtered.map((appointment) => (
                     <tr
                       key={appointment.id}
-                      className={`align-middle ${editingAppointment?.id === appointment.id ? "bg-primary-soft/30" : ""}`}
+                      className={`align-middle transition-colors hover:bg-surface-muted/50 ${editingAppointment?.id === appointment.id ? "bg-primary-soft/30" : ""}`}
                     >
                       <td className="px-6 py-4">
                         <div className="flex min-w-[180px] items-center gap-3">
@@ -382,10 +448,10 @@ export function AdminAppointmentManager({
 
             {/* Mobile cards */}
             <div className="space-y-3 p-4 lg:hidden">
-              {appointments.map((appointment) => (
+              {filtered.map((appointment) => (
                 <div
                   key={appointment.id}
-                  className={`rounded-[22px] border p-4 ${editingAppointment?.id === appointment.id ? "border-primary/30 bg-primary-soft/20" : "border-border/80 bg-surface-muted"}`}
+                  className={`rounded-[22px] border p-4 ${editingAppointment?.id === appointment.id ? "border-primary/30 bg-primary-soft/20" : "border-border/80 bg-white shadow-soft transition-shadow hover:shadow-card"}`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
